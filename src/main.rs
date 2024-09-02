@@ -1,8 +1,11 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Context, Error, Result};
 use atomicwrites::{AtomicFile, OverwriteBehavior::AllowOverwrite};
 use clap::{Args, Parser, Subcommand};
+use crossbeam_channel::{Receiver, Sender};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use std::{
+    collections::HashSet,
+    ffi::OsString,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -24,6 +27,12 @@ enum Command {
 #[derive(Args, Debug)]
 struct WatchArgs {
     path: PathBuf,
+
+    #[clap(short = 'e', long = "extension", default_values = ["jsonc", "jsoncc"])]
+    extensions: Vec<OsString>,
+
+    #[clap(short = 'r', long = "recursive")]
+    recursive: bool,
 
     #[clap(short = 'I', long = "inplace")]
     inplace: bool,
@@ -83,7 +92,12 @@ fn main() -> Result<()> {
             if a.inplace && a.output.is_some() {
                 bail!("Cannot format --inplace when --output is specified");
             }
-            format_single_file(&a)?;
+            format_single_file(
+                &a.input,
+                a.jsonc_output().as_ref(),
+                a.json_output.as_ref(),
+                a.compact,
+            )?;
         }
         Command::Watch(a) => watch(&a)?,
     }
@@ -91,11 +105,16 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn format_single_file(args: &FmtArgs) -> Result<()> {
-    let input_str = fs::read_to_string(&args.input).context("Reading input")?;
+fn format_single_file(
+    input: impl AsRef<Path>,
+    jsonc_output: Option<&JsoncOutput>,
+    json_output: Option<impl AsRef<Path>>,
+    json_compact: bool,
+) -> Result<()> {
+    let input_str = fs::read_to_string(&input).context("Reading input")?;
 
     // First, format jsonc
-    if let Some(jsonc_output) = args.jsonc_output() {
+    if let Some(jsonc_output) = jsonc_output {
         let output = fjson::to_jsonc(&input_str).context("Formatting to jsonc")?;
 
         match jsonc_output {
@@ -107,8 +126,8 @@ fn format_single_file(args: &FmtArgs) -> Result<()> {
     }
 
     // Format json next
-    if let Some(ref json_output_file) = args.json_output {
-        let output = if args.compact {
+    if let Some(ref json_output_file) = json_output {
+        let output = if json_compact {
             fjson::to_json(&input_str).context("Formatting to json")
         } else {
             fjson::to_json_compact(&input_str).context("Formatting to json")
@@ -123,29 +142,79 @@ fn format_single_file(args: &FmtArgs) -> Result<()> {
 }
 
 fn watch(args: &WatchArgs) -> Result<()> {
-    // Select recommended watcher for debouncer.
-    // Using a callback here, could also be a channel.
-    let mut debouncer =
-        new_debouncer(
-            Duration::from_millis(50),
-            |res: DebounceEventResult| match res {
-                Ok(events) => events
-                    .iter()
-                    .for_each(|e| println!("Event {:?} for {:?}", e.kind, e.path)),
-                Err(e) => println!("Error {:?}", e),
-            },
-        )
-        .context("Creating debouncer")?;
+    let (terminate_tx, terminate_rx): (Sender<Result<PathBuf>>, Receiver<Result<PathBuf>>) =
+        crossbeam_channel::bounded(100);
 
-    // Add a path to be watched. All files and directories at that path and
-    // below will be monitored for changes.
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(50),
+        move |res: DebounceEventResult| match res {
+            Ok(events) => events.into_iter().for_each(|evt| {
+                let _ = terminate_tx.send(Ok(evt.path));
+            }),
+            Err(e) => {
+                let _ = terminate_tx.send(Err(<notify_debouncer_mini::notify::Error as Into<
+                    Error,
+                >>::into(e)
+                .context("Getting debounced result")));
+            }
+        },
+    )
+    .context("Creating debouncer")?;
+
     debouncer
         .watcher()
-        .watch(Path::new("."), RecursiveMode::Recursive)
+        // TODO: Make this recursive or not
+        .watch(
+            Path::new(&args.path),
+            if args.recursive {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            },
+        )
         .context("Adding watch to debouncer")?;
 
-    // note that dropping the debouncer (as will happen here) also ends the debouncer
-    // thus this demo would need an endless loop to keep running
+    let mut just_formatted = HashSet::new();
+    while let Ok(evt) = terminate_rx.recv() {
+        match evt {
+            Ok(path) => {
+                if !(args
+                    .extensions
+                    .iter()
+                    .any(|ext| (&path).extension() == Some(ext))
+                    || args.extensions.is_empty())
+                {
+                    // This extension doesn't match their requested extensions
+                    continue;
+                }
+
+                if just_formatted.remove(&path) {
+                    // We just formatted it. This event came from us
+                    continue;
+                }
+
+                eprintln!("Got result: {path:#?}");
+
+                match format_single_file(
+                    &path,
+                    Some(&JsoncOutput::File(&path)),
+                    None::<&Path>,
+                    false,
+                ) {
+                    Ok(()) => {
+                        eprintln!("Formatted file {:?}", path);
+                        just_formatted.insert(path);
+                    }
+                    Err(e) => {
+                        eprintln!("Error formatting file {:?}: {e:?}", path);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Stopping watch because of error: {e:?}");
+            }
+        }
+    }
 
     Ok(())
 }
