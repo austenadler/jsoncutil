@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use atomicwrites::{AtomicFile, OverwriteBehavior::DisallowOverwrite};
+use atomicwrites::{AtomicFile, OverwriteBehavior::AllowOverwrite};
 use clap::{Args, Parser, Subcommand};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use std::{
@@ -38,6 +38,31 @@ struct FmtArgs {
 
     #[clap(short = 'c', long = "compact")]
     compact: bool,
+
+    #[clap(short = 'I', long = "inplace")]
+    inplace: bool,
+}
+
+impl FmtArgs {
+    /// Where should we format Jsonc output to?
+    fn jsonc_output(&self) -> Option<JsoncOutput> {
+        if self.inplace {
+            Some(JsoncOutput::File(&self.input))
+        } else if let Some(ref output_file) = &self.output {
+            Some(JsoncOutput::File(output_file))
+        } else if self.json_output.is_some() {
+            // We don't want to output jsonc anywhere if they don't specify -o and they do specify -O
+            None
+        } else {
+            // If they don't have any output specified, default to stdout
+            Some(JsoncOutput::Stdout)
+        }
+    }
+}
+
+enum JsoncOutput<'a> {
+    Stdout,
+    File(&'a Path),
 }
 
 fn main() -> Result<()> {
@@ -47,8 +72,12 @@ fn main() -> Result<()> {
 
     match options.command {
         Command::Fmt(a) => {
+            // TODO: Figure out how to validate this in clap Parser
             if a.compact && a.json_output.is_none() {
                 bail!("Cannot compact format jsonc. Specify --json-output if you want to use --compact");
+            }
+            if a.inplace && a.output.is_some() {
+                bail!("Cannot format --inplace when --output is specified");
             }
             format_single_file(&a)?;
         }
@@ -60,24 +89,19 @@ fn main() -> Result<()> {
 fn format_single_file(args: &FmtArgs) -> Result<()> {
     let input_str = fs::read_to_string(&args.input).context("Reading input")?;
 
-    if args.output.is_none() && args.json_output.is_none() {
-        // They only want to print to stdout
-        println!(
-            "{}",
-            fjson::to_jsonc(&input_str).context("Formatting to jsonc")?
-        );
-
-        return Ok(());
-    }
-
-    if let Some(ref output_file) = args.output {
+    // First, format jsonc
+    if let Some(jsonc_output) = args.jsonc_output() {
         let output = fjson::to_jsonc(&input_str).context("Formatting to jsonc")?;
 
-        AtomicFile::new(output_file, DisallowOverwrite)
-            .write(|f| f.write_all(&output.as_bytes()))
-            .context("Writing jsonc output")?;
+        match jsonc_output {
+            JsoncOutput::Stdout => print!("{output}"),
+            JsoncOutput::File(output_file) => AtomicFile::new(output_file, AllowOverwrite)
+                .write(|f| f.write_all(&output.as_bytes()))
+                .context("Writing jsonc output")?,
+        }
     }
 
+    // Format json next
     if let Some(ref json_output_file) = args.json_output {
         let output = if args.compact {
             fjson::to_json(&input_str).context("Formatting to json")
@@ -85,18 +109,13 @@ fn format_single_file(args: &FmtArgs) -> Result<()> {
             fjson::to_json_compact(&input_str).context("Formatting to json")
         }?;
 
-        AtomicFile::new(json_output_file, DisallowOverwrite)
+        AtomicFile::new(json_output_file, AllowOverwrite)
             .write(|f| f.write_all(&output.as_bytes()))
             .context("Writing jsonc output")?;
     }
 
     Ok(())
 }
-
-// let af = AtomicFile::new("foo", DisallowOverwrite);
-// af.write(|f| {
-//     f.write_all(b"HELLO")
-// })?;
 
 // fn x() {
 //     // Select recommended watcher for debouncer.
