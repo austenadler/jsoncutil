@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use atomicwrites::{AtomicFile, OverwriteBehavior::DisallowOverwrite};
 use clap::{Args, Parser, Subcommand};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use std::{
@@ -69,45 +70,33 @@ fn format_single_file(args: &FmtArgs) -> Result<()> {
         return Ok(());
     }
 
-    if let Some(ref output) = args.output {
-        let mut output_file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(output)
-            .context("Opening output file")?;
-
+    if let Some(ref output_file) = args.output {
         let output = fjson::to_jsonc(&input_str).context("Formatting to jsonc")?;
 
-        output_file
-            .write_all(&output.as_bytes())
+        AtomicFile::new(output_file, DisallowOverwrite)
+            .write(|f| f.write_all(&output.as_bytes()))
             .context("Writing jsonc output")?;
-
-        output_file.flush().context("Flushing jsonc output")?;
     }
 
-    if let Some(ref json_output) = args.json_output {
-        let mut json_output_file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(json_output)
-            .context("Opening output file")?;
-
+    if let Some(ref json_output_file) = args.json_output {
         let output = if args.compact {
             fjson::to_json(&input_str).context("Formatting to json")
         } else {
             fjson::to_json_compact(&input_str).context("Formatting to json")
         }?;
 
-        json_output_file
-            .write_all(&output.as_bytes())
-            .context("Writing json output")?;
-        json_output_file.flush().context("Flushing json output")?;
+        AtomicFile::new(json_output_file, DisallowOverwrite)
+            .write(|f| f.write_all(&output.as_bytes()))
+            .context("Writing jsonc output")?;
     }
 
     Ok(())
 }
+
+// let af = AtomicFile::new("foo", DisallowOverwrite);
+// af.write(|f| {
+//     f.write_all(b"HELLO")
+// })?;
 
 // fn x() {
 //     // Select recommended watcher for debouncer.
