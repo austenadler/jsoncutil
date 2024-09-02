@@ -18,18 +18,22 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     Fmt(FmtArgs),
-    // Watch(WatchArgs),
+    Watch(WatchArgs),
 }
 
-// #[derive(Args, Debug)]
-// struct WatchArgs {
-//     dir: PathBuf
-// }
+#[derive(Args, Debug)]
+struct WatchArgs {
+    path: PathBuf,
+
+    #[clap(short = 'I', long = "inplace")]
+    inplace: bool,
+}
 
 #[derive(Args, Debug)]
 struct FmtArgs {
-    #[clap(short = 'i', long = "input")]
+    // #[clap(short = 'i', long = "input")]
     input: PathBuf,
+
     #[clap(short = 'o', long = "output")]
     output: Option<PathBuf>,
 
@@ -81,6 +85,7 @@ fn main() -> Result<()> {
             }
             format_single_file(&a)?;
         }
+        Command::Watch(a) => watch(&a)?,
     }
 
     Ok(())
@@ -117,28 +122,30 @@ fn format_single_file(args: &FmtArgs) -> Result<()> {
     Ok(())
 }
 
-// fn x() {
-//     // Select recommended watcher for debouncer.
-//     // Using a callback here, could also be a channel.
-//     let mut debouncer =
-//         new_debouncer(
-//             Duration::from_millis(50),
-//             |res: DebounceEventResult| match res {
-//                 Ok(events) => events
-//                     .iter()
-//                     .for_each(|e| println!("Event {:?} for {:?}", e.kind, e.path)),
-//                 Err(e) => println!("Error {:?}", e),
-//             },
-//         )
-//         .unwrap();
+fn watch(args: &WatchArgs) -> Result<()> {
+    // Select recommended watcher for debouncer.
+    // Using a callback here, could also be a channel.
+    let mut debouncer =
+        new_debouncer(
+            Duration::from_millis(50),
+            |res: DebounceEventResult| match res {
+                Ok(events) => events
+                    .iter()
+                    .for_each(|e| println!("Event {:?} for {:?}", e.kind, e.path)),
+                Err(e) => println!("Error {:?}", e),
+            },
+        )
+        .context("Creating debouncer")?;
 
-//     // Add a path to be watched. All files and directories at that path and
-//     // below will be monitored for changes.
-//     debouncer
-//         .watcher()
-//         .watch(Path::new("."), RecursiveMode::Recursive)
-//         .unwrap();
+    // Add a path to be watched. All files and directories at that path and
+    // below will be monitored for changes.
+    debouncer
+        .watcher()
+        .watch(Path::new("."), RecursiveMode::Recursive)
+        .context("Adding watch to debouncer")?;
 
-//     // note that dropping the debouncer (as will happen here) also ends the debouncer
-//     // thus this demo would need an endless loop to keep running
-// }
+    // note that dropping the debouncer (as will happen here) also ends the debouncer
+    // thus this demo would need an endless loop to keep running
+
+    Ok(())
+}
