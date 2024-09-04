@@ -5,10 +5,11 @@ use crossbeam_channel::{Receiver, Sender};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use std::{
     collections::HashSet,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs,
     io::Write,
     path::{Path, PathBuf},
+    str::FromStr,
     time::Duration,
 };
 
@@ -71,7 +72,11 @@ impl FmtArgs {
                 "Argument parsing error -- input was empty, but --inplace was specified",
             )))
         } else if let Some(ref output_file) = &self.output {
-            Some(JsoncOutput::File(output_file))
+            Some(if output_file.as_os_str() == "-" {
+                JsoncOutput::Stdout
+            } else {
+                JsoncOutput::File(output_file)
+            })
         } else if self.json_output.is_some() {
             // We don't want to output jsonc anywhere if they don't specify -o and they do specify -O
             None
@@ -139,9 +144,9 @@ fn format_single_file(
     // Format json next
     if let Some(ref json_output_file) = json_output {
         let output = if json_compact {
-            fjson::to_json(&input_str).context("Formatting to json")
-        } else {
             fjson::to_json_compact(&input_str).context("Formatting to json")
+        } else {
+            fjson::to_json(&input_str).context("Formatting to json")
         }?;
 
         if json_output_file.as_ref().as_os_str() == "-" {
