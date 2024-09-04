@@ -5,11 +5,10 @@ use crossbeam_channel::{Receiver, Sender};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use std::{
     collections::HashSet,
-    ffi::{OsStr, OsString},
+    ffi::OsString,
     fs,
     io::Write,
     path::{Path, PathBuf},
-    str::FromStr,
     time::Duration,
 };
 
@@ -162,6 +161,8 @@ fn format_single_file(
 }
 
 fn watch(args: &WatchArgs) -> Result<()> {
+    let is_watching_file = args.path.is_file();
+
     let (terminate_tx, terminate_rx): (Sender<Result<PathBuf>>, Receiver<Result<PathBuf>>) =
         crossbeam_channel::bounded(100);
 
@@ -185,7 +186,7 @@ fn watch(args: &WatchArgs) -> Result<()> {
         .watcher()
         // TODO: Make this recursive or not
         .watch(
-            Path::new(&args.path),
+            &args.path,
             if args.recursive {
                 RecursiveMode::Recursive
             } else {
@@ -194,7 +195,11 @@ fn watch(args: &WatchArgs) -> Result<()> {
         )
         .context("Adding watch to debouncer")?;
 
+    // Keep track of files that have just been formatted
     let mut just_formatted = HashSet::new();
+
+    eprintln!("Watching {:?}", args.path);
+
     while let Ok(evt) = terminate_rx.recv() {
         match evt {
             Ok(path) => {
@@ -223,6 +228,18 @@ fn watch(args: &WatchArgs) -> Result<()> {
                 ) {
                     Ok(()) => {
                         eprintln!("Formatted file {:?}", path);
+
+                        if is_watching_file {
+                            // If they are having us just watch a single file, we need to re-watch it
+                            // This is because on formatting, the file is unlinked, so we lose our watch
+                            debouncer
+                                .watcher()
+                                // TODO: Make this recursive or not
+                                .watch(&args.path, RecursiveMode::NonRecursive)
+                                .context("Adding watch to debouncer")?;
+                        }
+
+                        // Otherwise, we don't want to trigger anything for this file, so we ignore it next time
                         just_formatted.insert(path);
                     }
                     Err(e) => {
