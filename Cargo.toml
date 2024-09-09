@@ -8,5 +8,13 @@ anyhow = "1.0.86"
 atomicwrites = "0.4.3"
 clap = { version = "4.5.16", features = ["derive"] }
 crossbeam-channel = "0.5.13"
-fjson = "0.3.1"
+derivative = "2.2.0"
+# fjson = {path="./fjson/"}
+# fjson = "0.3.1"
+memchr = "2.7.4"
 notify-debouncer-mini = "0.4.1"
+oxidized-json-checker = "0.3.2"
+thiserror = "1.0.63"
+
+# [profile.release]
+# debug = 2

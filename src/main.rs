@@ -1,167 +1,257 @@
+mod indentor;
+mod parser;
+
 use anyhow::{bail, Context, Error, Result};
 use atomicwrites::{AtomicFile, OverwriteBehavior::AllowOverwrite};
 use clap::{Args, Parser, Subcommand};
 use crossbeam_channel::{Receiver, Sender};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
+use parser::Mode;
 use std::{
     collections::HashSet,
+    convert::Infallible,
     ffi::OsString,
-    fs,
-    io::Write,
+    fs::File,
+    io::{BufRead, BufReader, BufWriter},
     path::{Path, PathBuf},
+    str::FromStr,
     time::Duration,
 };
 
 #[derive(Parser, Debug)]
 struct Cli {
+    #[clap(help = "Input file, or `-` for stdin", default_value = "-")]
+    input: IoArg,
+
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
+
+    #[command(flatten)]
+    fmt_args: FmtArgs,
+
+    #[clap(
+        short = 'o',
+        long = "jsoncc-output",
+        help = "Output file; will be stdout if no output is specified"
+    )]
+    output: Option<IoArg>,
+
+    #[clap(short = 'O', long = "json-output", help = "Output file for json")]
+    json_output: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    #[clap(about = "Format a single file or stdin")]
-    Fmt(FmtArgs),
+    // #[clap(about = "Format a single file or stdin")]
+    // Fmt(FmtArgs),
     #[clap(about = "Watch a file or directory for changes")]
     Watch(WatchArgs),
 }
 
 #[derive(Args, Debug)]
 struct WatchArgs {
-    path: PathBuf,
-
+    // path: PathBuf,
     #[clap(short = 'e', long = "extension", default_values = ["jsonc", "jsoncc"], help = "File extensions to track")]
     extensions: Vec<OsString>,
 
     #[clap(short = 'r', long = "recursive", help = "Recursively search files")]
     recursive: bool,
-
-    #[clap(short = 'I', long = "inplace", help = "Replace each file inplace")]
-    inplace: bool,
+    // #[clap(short = 'I', long = "inplace", help = "Replace each file inplace")]
+    // inplace: bool,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 struct FmtArgs {
-    // #[clap(short = 'i', long = "input")]
-    #[clap(help = "Input file, or `-` for stdin")]
-    input: Option<PathBuf>,
-
     #[clap(
-        short = 'o',
-        long = "output",
-        help = "Output file; will be stdout if no output is specified"
+        short = 'c',
+        long = "compact",
+        help = "Compact json format",
+        conflicts_with = "output"
     )]
-    output: Option<PathBuf>,
-
-    #[clap(short = 'O', long = "json-output", help = "Output file for json")]
-    json_output: Option<PathBuf>,
-
-    #[clap(short = 'c', long = "compact", help = "Compact json format")]
     compact: bool,
 
-    #[clap(short = 'I', long = "inplace", help = "Replace file contents inplace")]
+    #[clap(
+        short = 'I',
+        long = "inplace",
+        help = "Replace file contents inplace",
+        requires = "input"
+    )]
     inplace: bool,
+
+    #[clap(short = 'V', long = "validate", help = "Validate input is valid")]
+    validate: bool,
 }
 
-impl FmtArgs {
+impl Cli {
     /// Where should we format Jsonc output to?
-    fn jsonc_output(&self) -> Option<JsoncOutput> {
-        if self.inplace {
-            Some(JsoncOutput::File(self.input.as_ref().expect(
-                "Argument parsing error -- input was empty, but --inplace was specified",
-            )))
-        } else if let Some(ref output_file) = &self.output {
-            Some(if output_file.as_os_str() == "-" {
-                JsoncOutput::Stdout
-            } else {
-                JsoncOutput::File(output_file)
-            })
+    fn jsonc_output(&self) -> Option<IoArgRef<'_>> {
+        if self.fmt_args.inplace {
+            if !matches!(self.input, IoArg::File(_)) {
+                panic!("--inplace was specified, but input is not a file");
+            }
+
+            Some(self.input.as_output())
+        } else if self.output.is_some() {
+            self.output.as_ref().map(IoArg::as_output)
         } else if self.json_output.is_some() {
             // We don't want to output jsonc anywhere if they don't specify -o and they do specify -O
             None
         } else {
             // If they don't have any output specified, default to stdout
-            Some(JsoncOutput::Stdout)
+            Some(IoArgRef::Stdio)
         }
     }
 }
 
-enum JsoncOutput<'a> {
-    Stdout,
+/// An argument that represents a file or stdin/stdout
+#[derive(Debug, Clone)]
+enum IoArg {
+    Stdio,
+    File(PathBuf),
+}
+
+impl Default for IoArg {
+    fn default() -> Self {
+        Self::Stdio
+    }
+}
+
+impl FromStr for IoArg {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s == "-" {
+            Ok(Self::Stdio)
+        } else {
+            PathBuf::from_str(s).map(Self::File)
+        }
+    }
+}
+
+impl IoArg {
+    fn as_output(&self) -> IoArgRef {
+        match self {
+            Self::Stdio => IoArgRef::Stdio,
+            Self::File(f) => IoArgRef::File(f),
+        }
+    }
+}
+
+// impl<'a> AsRef<Output<'a>> for IoArg {
+//     fn as_ref<'b>(&'b self) -> &'b Output<'a> {
+//         match self {
+//             IoArg::Stdio => &Output::Stdio,
+//             IoArg::File(f) => &Output::File(f),
+//         }
+//     }
+// }
+
+#[derive(Debug)]
+enum IoArgRef<'a> {
+    Stdio,
     File(&'a Path),
 }
 
 fn main() -> Result<()> {
-    let options = Cli::parse();
+    let cli = Cli::parse();
 
-    match options.command {
-        Command::Fmt(a) => {
+    match &cli.command {
+        None => {
             // TODO: Figure out how to validate this in clap Parser
-            if a.compact && a.json_output.is_none() {
+            if cli.fmt_args.compact && cli.json_output.is_none() {
                 bail!("Cannot compact format jsonc. Specify --json-output if you want to use --compact");
             }
-            if a.inplace && a.output.is_some() {
+            if cli.fmt_args.inplace && cli.output.is_some() {
                 bail!("Cannot format --inplace when --output is specified");
             }
             format_single_file(
-                a.input.as_ref(),
-                a.jsonc_output().as_ref(),
-                a.json_output.as_ref(),
-                a.compact,
+                &cli.input.as_output(),
+                cli.jsonc_output().as_ref(),
+                cli.json_output.as_ref(),
+                &cli.fmt_args,
             )?;
         }
-        Command::Watch(a) => watch(&a)?,
+        Some(Command::Watch(a)) => watch(&cli, a)?,
     }
 
     Ok(())
 }
 
+// TODO: Accept a [`FmtArgs`]
 fn format_single_file(
-    input: Option<impl AsRef<Path>>,
-    jsonc_output: Option<&JsoncOutput>,
+    input: &IoArgRef,
+    jsonc_output: Option<&IoArgRef>,
     json_output: Option<impl AsRef<Path>>,
-    json_compact: bool,
+    fmt_args: &FmtArgs,
 ) -> Result<()> {
-    let input_str = if let Some(input_filename) = input {
-        fs::read_to_string(&input_filename).context("Reading input")?
+    let mut input: Box<dyn BufRead> = if let IoArgRef::File(input_filename) = input {
+        Box::new(BufReader::new(
+            File::open(input_filename).context("Reading input")?,
+        ))
     } else {
-        std::io::read_to_string(std::io::stdin()).context("Reading stdin")?
+        Box::new(BufReader::new(std::io::stdin().lock()))
     };
 
     // First, format jsonc
     if let Some(jsonc_output) = jsonc_output {
-        let output = fjson::to_jsonc(&input_str).context("Parsing jsonc")?;
-
         match jsonc_output {
-            JsoncOutput::Stdout => print!("{output}"),
-            JsoncOutput::File(output_file) => AtomicFile::new(output_file, AllowOverwrite)
-                .write(|f| f.write_all(output.as_bytes()))
-                .context("Writing jsonc output")?,
+            IoArgRef::Stdio => parser::Parser::new(
+                parser::Mode::Jsoncc,
+                &mut input,
+                BufWriter::new(std::io::stdout()),
+            )
+            .format_buf()
+            .context("Formatting file")?,
+            IoArgRef::File(output_file) => AtomicFile::new(output_file, AllowOverwrite)
+                .write(|f| {
+                    parser::Parser::new(parser::Mode::CompactJson, &mut input, BufWriter::new(f))
+                        .format_buf()
+                })
+                .context("Formatting file")?,
         }
     }
 
     // Format json next
     if let Some(ref json_output_file) = json_output {
-        let output = if json_compact {
-            fjson::to_json_compact(&input_str).context("Formatting to json")
+        let mode = if fmt_args.compact {
+            Mode::CompactJson
         } else {
-            fjson::to_json(&input_str).context("Formatting to json")
-        }?;
+            Mode::Json
+        };
 
         if json_output_file.as_ref().as_os_str() == "-" {
-            print!("{output}");
+            parser::Parser::new(mode, &mut input, BufWriter::new(std::io::stdout()))
+                .format_buf()
+                .context("Formatting file")?
         } else {
             AtomicFile::new(json_output_file, AllowOverwrite)
-                .write(|f| f.write_all(output.as_bytes()))
-                .context("Writing jsonc output")?;
+                .write(|f| parser::Parser::new(mode, &mut input, BufWriter::new(f)).format_buf())
+                .context("Writing json output")?;
         }
+    }
+
+    // Validate - Just duplicate code here. If they want to validate, it adds a little extra cost anyway
+    // Reformatting is probably not a big cost
+    if fmt_args.validate {
+        // TODO: Not
+        let mut buf = vec![];
+        parser::Parser::new(Mode::CompactJson, &mut input, BufWriter::new(&mut buf))
+            .format_buf()
+            .context("Formatting file")?;
+
+        oxidized_json_checker::validate(&buf[..])?;
     }
 
     Ok(())
 }
 
-fn watch(args: &WatchArgs) -> Result<()> {
-    let is_watching_file = args.path.is_file();
+fn watch(cli: &Cli, args: &WatchArgs) -> Result<()> {
+    // The path to watch
+    let IoArg::File(ref watch_path) = cli.input else {
+        panic!("Input must be specified")
+    };
+    // True if we are watching only a single file
+    let is_watching_file = watch_path.is_file();
 
     let (terminate_tx, terminate_rx): (Sender<Result<PathBuf>>, Receiver<Result<PathBuf>>) =
         crossbeam_channel::bounded(100);
@@ -186,7 +276,7 @@ fn watch(args: &WatchArgs) -> Result<()> {
         .watcher()
         // TODO: Make this recursive or not
         .watch(
-            &args.path,
+            watch_path,
             if args.recursive {
                 RecursiveMode::Recursive
             } else {
@@ -198,7 +288,7 @@ fn watch(args: &WatchArgs) -> Result<()> {
     // Keep track of files that have just been formatted
     let mut just_formatted = HashSet::new();
 
-    eprintln!("Watching {:?}", args.path);
+    eprintln!("Watching {:?}", watch_path);
 
     while let Ok(evt) = terminate_rx.recv() {
         match evt {
@@ -221,10 +311,10 @@ fn watch(args: &WatchArgs) -> Result<()> {
                 eprintln!("Got result: {path:#?}");
 
                 match format_single_file(
-                    Some(&path),
-                    Some(&JsoncOutput::File(&path)),
+                    &IoArgRef::File(&path),
+                    Some(&IoArgRef::File(&path)),
                     None::<&Path>,
-                    false,
+                    &cli.fmt_args,
                 ) {
                     Ok(()) => {
                         eprintln!("Formatted file {:?}", path);
@@ -234,12 +324,11 @@ fn watch(args: &WatchArgs) -> Result<()> {
                             // This is because on formatting, the file is unlinked, so we lose our watch
                             debouncer
                                 .watcher()
-                                // TODO: Make this recursive or not
-                                .watch(&args.path, RecursiveMode::NonRecursive)
+                                .watch(&path, RecursiveMode::NonRecursive)
                                 .context("Adding watch to debouncer")?;
                         }
 
-                        // Otherwise, we don't want to trigger anything for this file, so we ignore it next time
+                        // We don't want to trigger anything for this file, so we ignore it next time
                         just_formatted.insert(path);
                     }
                     Err(e) => {
