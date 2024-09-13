@@ -630,10 +630,23 @@ where
                     self.toggle_awaiting_key()?;
                 }
                 // // -> [/{
-                (Token::Comment { ty: _, own_line: _ }, Token::CollectionStart { ty }) => {
+                (
+                    Token::Comment {
+                        ty: comment_ty,
+                        own_line: comment_own_line,
+                    },
+                    Token::CollectionStart { ty },
+                ) => {
                     // TODO: The newline should be conditional
                     // {"a":/**/[]} should not have a newline before the `[`
-                    self.newline()?;
+                    if comment_ty == CommentType::Block
+                        && !comment_own_line
+                        && !self.is_after_value()?
+                    {
+                        self.extra_spacing()?;
+                    } else {
+                        self.newline()?;
+                    }
                     w!(self.write, ty.start_str());
                     self.state_stack.push_back(ty.as_state());
                 }
@@ -652,10 +665,23 @@ where
                     self.drain_comment(ty)?;
                 }
                 // // -> ""
-                (Token::Comment { ty: _, own_line: _ }, Token::Value { ty, first_char }) => {
+                (
+                    Token::Comment {
+                        ty: comment_ty,
+                        own_line: comment_own_line,
+                    },
+                    Token::Value { ty, first_char },
+                ) => {
                     // TODO: The newline should be conditional
                     // {"a":/**/"b"} should not have a newline
-                    self.newline()?;
+                    if comment_ty == CommentType::Block
+                        && !comment_own_line
+                        && !self.is_after_value()?
+                    {
+                        self.extra_spacing()?;
+                    } else {
+                        self.newline()?;
+                    }
                     self.drain_value(ty, *first_char)?;
 
                     if self.is_awaiting_key()? {
