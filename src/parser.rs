@@ -1,5 +1,6 @@
 // use anyhow::Result;
 use std::collections::VecDeque;
+use std::fmt::Debug;
 use std::io::BufRead;
 use std::io::ErrorKind;
 use std::io::Write;
@@ -41,7 +42,7 @@ macro_rules! w {
         let buf = $buf;
         let x: &[u8] = buf.as_ref();
         eprintln!(
-            "### Writing {:?}",
+            "### \x1b[93mWriting\x1b[0m {:?}",
             ::std::string::String::from_utf8_lossy(&x)
         );
         $dst.write_all(x)?;
@@ -108,7 +109,8 @@ impl Error {
 ///
 /// 1. All input is jsoncc, which has optional `,`. `,` provides no extra information as the next token would need to be checked to decide if the current value is the last value
 /// 1. `:` state is derived by the [`CollectionState::Object`] `awaiting_key` field
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Derivative, Clone, Copy, PartialEq, Eq)]
+#[derivative(Debug)]
 pub enum Token {
     /// We have reached an EOF at a position that is not in a value
     Eof,
@@ -130,7 +132,16 @@ pub enum Token {
         own_line: bool,
     },
     /// A value that is not a collection
-    Value { ty: ValueType, first_char: u8 },
+    Value {
+        ty: ValueType,
+        #[derivative(Debug(format_with = "fmt_u8_as_char"))]
+        first_char: u8,
+    },
+}
+
+fn fmt_u8_as_char(c: &u8, f: &mut std::fmt::Formatter) -> std::result::Result<(), std::fmt::Error> {
+    Debug::fmt(&(*c as char), f)?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,6 +243,7 @@ where
     /// The mode of operation of the parser
     mode: Mode,
     /// Buffered indent strings so repeated calls do not have to repeated call [`std::io::repeat`]
+    #[derivative(Debug = "ignore")]
     indentor: Indentor,
 }
 
@@ -524,7 +536,7 @@ where
     pub fn format_buf(mut self) -> Result<()> {
         loop {
             eprintln!("========================================================");
-            eprintln!("{:?}", self);
+            eprintln!("{:#?}", self);
 
             let mut next_token = self.get_next_token()?;
 
@@ -532,7 +544,7 @@ where
             eprintln!();
 
             match (self.current_token, &next_token) {
-                // root -> {/[
+                // root -> [/{
                 (Token::Root, Token::CollectionStart { ty }) => {
                     self.state_stack.push_back(ty.as_state());
                     w!(self.write, ty.start_str());
@@ -552,14 +564,14 @@ where
                     self.drain_value(ty, *first_char)?;
                     next_token = Token::Root;
                 }
-                // {/[ -> {/[
+                // {/[ -> [/{
                 (Token::CollectionStart { ty: _ }, Token::CollectionStart { ty }) => {
                     self.newline()?;
                     w!(self.write, ty.start_str());
                     self.set_awaiting_key(true)?;
                     self.state_stack.push_back(ty.as_state());
                 }
-                // {/[ -> }/]
+                // {/[ -> ]/}
                 (Token::CollectionStart { ty: _ }, Token::CollectionEnd { ty }) => {
                     self.exit_collection(ty)?;
                     w!(self.write, ty.end_str());
@@ -582,7 +594,7 @@ where
                     }
                     self.toggle_awaiting_key()?;
                 }
-                // }/] -> {/[
+                // }/] -> [/{
                 // This can't occur if the outer collection is an object (`{{}: []}` is not valid json)
                 // Therefore, we don't need to worry
                 (Token::CollectionEnd { ty: _ }, Token::CollectionStart { ty }) => {
@@ -591,7 +603,7 @@ where
                     w!(self.write, ty.start_str());
                     self.state_stack.push_back(ty.as_state());
                 }
-                // }/] -> }/]
+                // }/] -> ]/}
                 (Token::CollectionEnd { ty: _ }, Token::CollectionEnd { ty }) => {
                     self.trailing_comma()?;
                     self.exit_collection(ty)?;
@@ -619,13 +631,13 @@ where
                     }
                     self.toggle_awaiting_key()?;
                 }
-                // // -> {/[
+                // // -> [/{
                 (Token::Comment { ty: _, own_line: _ }, Token::CollectionStart { ty }) => {
                     self.newline()?;
                     w!(self.write, ty.start_str());
                     self.state_stack.push_back(ty.as_state());
                 }
-                // // -> }/]
+                // // -> ]/}
                 (Token::Comment { ty: _, own_line: _ }, Token::CollectionEnd { ty }) => {
                     self.exit_collection(ty)?;
                     self.newline()?;
@@ -650,7 +662,7 @@ where
                     }
                     self.toggle_awaiting_key()?;
                 }
-                // "" -> {/[
+                // "" -> [/{
                 (
                     Token::Value {
                         ty: _,
@@ -662,18 +674,16 @@ where
                         // We are in an arry
                         self.comma()?;
                         self.newline()?;
-                    } else if self.is_awaiting_key()? {
+                    } else if !self.is_awaiting_key()? {
                         // We are in an object
                         self.extra_spacing()?;
                     }
-                    // We just saw a value, so the next one must be a key
-                    self.set_awaiting_key(true)?;
 
                     w!(self.write, ty.start_str());
                     self.toggle_awaiting_key()?;
                     self.state_stack.push_back(ty.as_state());
                 }
-                // "" -> }/]
+                // "" -> ]/}
                 (
                     Token::Value {
                         ty: _,
@@ -717,7 +727,7 @@ where
                     if self.is_after_value()? {
                         self.comma()?;
                         self.newline()?;
-                    } else if self.is_awaiting_key()? {
+                    } else if !self.is_awaiting_key()? {
                         // The previous value was an object key, so put a space after the `:`
                         self.extra_spacing()?;
                     }
