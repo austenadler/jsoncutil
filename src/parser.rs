@@ -35,16 +35,18 @@ const C_PLUS: u8 = b'+';
 const C_DOT: u8 = b'.';
 const C_MINUS: u8 = b'-';
 const C_E: u8 = b'-';
+const C_F: u8 = b'f';
+const C_T: u8 = b't';
 
 /// Write some bytes to the writer
 macro_rules! w {
     ($dst: expr, $buf:expr) => {{
         let buf = $buf;
         let x: &[u8] = buf.as_ref();
-        eprintln!(
-            "### \x1b[93mWriting\x1b[0m {:?}",
-            ::std::string::String::from_utf8_lossy(&x)
-        );
+        // eprintln!(
+        //     "### \x1b[93mWriting\x1b[0m {:?}",
+        //     ::std::string::String::from_utf8_lossy(&x)
+        // );
         $dst.write_all(x)?;
     }};
 }
@@ -402,7 +404,7 @@ where
                 }
                 Ok(())
             }
-            (ValueType::Boolean, b't') => {
+            (ValueType::Boolean, C_T) => {
                 let mut chr = [0_u8; 3];
                 self.input.read_exact(&mut chr)?;
 
@@ -413,7 +415,7 @@ where
                     Err(Error::UnexpectedValue)
                 }
             }
-            (ValueType::Boolean, b'f') => {
+            (ValueType::Boolean, C_F) => {
                 let mut chr = [0_u8; 4];
                 self.input.read_exact(&mut chr)?;
 
@@ -535,13 +537,13 @@ where
     /// In Jsoncc/Json mode, write a newline, indent, and flush the `"b"` Value
     pub fn format_buf(mut self) -> Result<()> {
         loop {
-            eprintln!("========================================================");
-            eprintln!("{:#?}", self);
+            // eprintln!("========================================================");
+            // eprintln!("{:#?}", self);
 
             let mut next_token = self.get_next_token()?;
 
-            eprintln!("{:#?}\n{:#?}", self.current_token, next_token);
-            eprintln!();
+            // eprintln!("{:#?}\n{:#?}", self.current_token, next_token);
+            // eprintln!();
 
             match (self.current_token, &next_token) {
                 // root -> [/{
@@ -549,11 +551,6 @@ where
                     self.state_stack.push_back(ty.as_state());
                     w!(self.write, ty.start_str());
                 }
-                // (Token::Root, Token::CollectionEnd { ty }) => {
-                //     self.exit_collection(ty)?;
-                //     w!(self.write, ty.end_str());
-                //     w!(self.write, ty.end_str());
-                // }
                 // root -> //
                 (Token::Root, Token::Comment { ty, own_line: _ }) => {
                     w!(self.write, ty.start_str());
@@ -829,7 +826,7 @@ where
                 }
                 C_COMMA => continue,
 
-                c @ b't' | c @ b'f' => Token::Value {
+                c @ C_T | c @ C_F => Token::Value {
                     ty: ValueType::Boolean,
                     first_char: c,
                 },
