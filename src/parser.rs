@@ -37,6 +37,7 @@ const C_MINUS: u8 = b'-';
 const C_E: u8 = b'-';
 const C_F: u8 = b'f';
 const C_T: u8 = b't';
+const C_N: u8 = b'n';
 
 /// Write some bytes to the writer
 macro_rules! w {
@@ -426,7 +427,7 @@ where
                     Err(Error::UnexpectedValue)
                 }
             }
-            (ValueType::Null, b'n') => {
+            (ValueType::Null, C_N) => {
                 let mut chr = [0_u8; 3];
                 self.input.read_exact(&mut chr)?;
 
@@ -630,6 +631,8 @@ where
                 }
                 // // -> [/{
                 (Token::Comment { ty: _, own_line: _ }, Token::CollectionStart { ty }) => {
+                    // TODO: The newline should be conditional
+                    // {"a":/**/[]} should not have a newline before the `[`
                     self.newline()?;
                     w!(self.write, ty.start_str());
                     self.state_stack.push_back(ty.as_state());
@@ -650,6 +653,8 @@ where
                 }
                 // // -> ""
                 (Token::Comment { ty: _, own_line: _ }, Token::Value { ty, first_char }) => {
+                    // TODO: The newline should be conditional
+                    // {"a":/**/"b"} should not have a newline
                     self.newline()?;
                     self.drain_value(ty, *first_char)?;
 
