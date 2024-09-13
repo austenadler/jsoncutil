@@ -35,6 +35,19 @@ const C_DOT: u8 = b'.';
 const C_MINUS: u8 = b'-';
 const C_E: u8 = b'-';
 
+/// Write some bytes to the writer
+macro_rules! w {
+    ($dst: expr, $buf:expr) => {{
+        let buf = $buf;
+        let x: &[u8] = buf.as_ref();
+        eprintln!(
+            "### Writing {:?}",
+            ::std::string::String::from_utf8_lossy(&x)
+        );
+        $dst.write_all(x)?;
+    }};
+}
+
 /// Mode of operation of ouptut of the parser
 #[derive(Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -254,7 +267,7 @@ where
                 CommentType::Line => match line_comment_end(buf) {
                     Some(idx) => {
                         if self.mode.keep_comments() {
-                            self.write.write_all(&buf[0..idx])?;
+                            w!(self.write, &buf[0..idx]);
                         }
 
                         self.input.consume(idx);
@@ -262,7 +275,7 @@ where
                     }
                     None => {
                         if self.mode.keep_comments() {
-                            self.write.write_all(buf)?;
+                            w!(self.write, buf);
                         }
                         let len = buf.len();
                         self.input.consume(len);
@@ -272,7 +285,7 @@ where
                     if maybe_block_end && buf[0] == b'/' {
                         // We ended the block comment
                         if self.mode.keep_comments() {
-                            self.write.write_all(b"/")?;
+                            w!(self.write, b"/");
                         }
                         break;
                     }
@@ -282,7 +295,7 @@ where
                     match block_comment_end(buf) {
                         BlockCommentEnd::Position(idx) => {
                             if self.mode.keep_comments() {
-                                self.write.write_all(&buf[0..idx])?;
+                                w!(self.write, &buf[0..idx]);
                             }
 
                             self.input.consume(idx);
@@ -290,7 +303,7 @@ where
                         }
                         BlockCommentEnd::MaybeEnd => {
                             if self.mode.keep_comments() {
-                                self.write.write_all(buf)?;
+                                w!(self.write, buf);
                             }
                             let len = buf.len();
                             self.input.consume(len);
@@ -298,7 +311,7 @@ where
                         }
                         BlockCommentEnd::None => {
                             if self.mode.keep_comments() {
-                                self.write.write_all(buf)?;
+                                w!(self.write, buf);
                             }
                             let len = buf.len();
                             self.input.consume(len);
@@ -316,7 +329,7 @@ where
         match (ty, first_char) {
             (ValueType::String, C_QUOTE) => {
                 let mut next_char_escaped = false;
-                self.write([C_QUOTE])?;
+                w!(self.write, [C_QUOTE]);
 
                 // Loop until we are done with the string
                 loop {
@@ -324,7 +337,7 @@ where
                         // The previous buffer ended in `\`
                         // Send this character out
                         let next_char = self.next_char()?;
-                        self.write([next_char])?;
+                        w!(self.write, [next_char]);
                     }
                     next_char_escaped = false;
 
@@ -336,18 +349,18 @@ where
 
                     match string_end(buf) {
                         StringEnd::Position(idx) => {
-                            self.write.write_all(&buf[0..idx])?;
+                            w!(self.write, &buf[0..idx]);
                             self.input.consume(idx);
                             break;
                         }
                         StringEnd::MaybeEnd => {
-                            self.write.write_all(buf)?;
+                            w!(self.write, buf);
                             let len = buf.len();
                             self.input.consume(len);
                             next_char_escaped = true;
                         }
                         StringEnd::None => {
-                            self.write.write_all(buf)?;
+                            w!(self.write, buf);
                             let len = buf.len();
                             self.input.consume(len);
                         }
@@ -355,13 +368,13 @@ where
                 }
 
                 let next_char = self.next_char()?;
-                self.write([next_char])?;
+                w!(self.write, [next_char]);
 
                 Ok(())
             }
             (ValueType::Number, mut c) => {
                 loop {
-                    self.write([c])?;
+                    w!(self.write, [c]);
                     c = self.peek_next_char()?;
                     // Any of the json numerical characters
                     if c == C_PLUS
@@ -382,7 +395,7 @@ where
                 self.input.read_exact(&mut chr)?;
 
                 if chr == *b"rue" {
-                    self.write("true")?;
+                    w!(self.write, "true");
                     Ok(())
                 } else {
                     Err(Error::UnexpectedValue)
@@ -393,7 +406,7 @@ where
                 self.input.read_exact(&mut chr)?;
 
                 if chr == *b"alse" {
-                    self.write("false")?;
+                    w!(self.write, "false");
                     Ok(())
                 } else {
                     Err(Error::UnexpectedValue)
@@ -404,7 +417,7 @@ where
                 self.input.read_exact(&mut chr)?;
 
                 if chr == *b"ull" {
-                    self.write("null")?;
+                    w!(self.write, "null");
                     Ok(())
                 } else {
                     Err(Error::UnexpectedValue)
@@ -417,16 +430,17 @@ where
         }
     }
 
-    /// Write some bytes to the writer
-    fn write(&mut self, buf: impl AsRef<[u8]>) -> Result<()> {
-        // eprintln!("### Writing {:?}", String::from_utf8_lossy(buf.as_ref()));
-        self.write.write_all(buf.as_ref())?;
-        Ok(())
-    }
+    // /// Write some bytes to the writer
+    // fn write(&mut self, buf: impl AsRef<[u8]>) -> Result<()> {
+    //     w!(&mut self.write, buf);
+    //     eprintln!("### Writing {:?}", String::from_utf8_lossy(buf.as_ref()));
+    //     self.write.write_all(buf.as_ref())?;
+    //     Ok(())
+    // }
 
     /// Write the record separator to the writer
     fn record_separator(&mut self) -> Result<()> {
-        self.write(RECORD_SEPARATOR)?;
+        w!(self.write, RECORD_SEPARATOR);
 
         Ok(())
     }
@@ -434,7 +448,7 @@ where
     /// Add extra padding after `:` or before the `//`/`/*` in a comment, if the format requests it
     fn extra_spacing(&mut self) -> Result<()> {
         match self.mode {
-            Mode::Jsoncc | Mode::Json => self.write(" ")?,
+            Mode::Jsoncc | Mode::Json => w!(self.write, " "),
             Mode::CompactJson => {}
         }
 
@@ -448,7 +462,7 @@ where
             return Ok(());
         }
 
-        self.write(",")?;
+        w!(self.write, ",");
 
         Ok(())
     }
@@ -467,7 +481,7 @@ where
     fn newline(&mut self) -> Result<()> {
         match self.mode {
             Mode::Jsoncc | Mode::Json => {
-                self.write(NEWLINE)?;
+                w!(self.write, NEWLINE);
                 self.write
                     .write_all(self.indentor.get_indent(self.state_stack.len()))?;
             }
@@ -509,110 +523,134 @@ where
     /// In Jsoncc/Json mode, write a newline, indent, and flush the `"b"` Value
     pub fn format_buf(mut self) -> Result<()> {
         loop {
-            // eprintln!("========================================================");
-            // eprintln!("{:?}", self);
+            eprintln!("========================================================");
+            eprintln!("{:?}", self);
 
             let mut next_token = self.get_next_token()?;
 
-            // eprintln!("{:#?}\n{:#?}", self.current_token, next_token);
-            // eprintln!();
+            eprintln!("{:#?}\n{:#?}", self.current_token, next_token);
+            eprintln!();
 
             match (self.current_token, &next_token) {
+                // root -> {/[
                 (Token::Root, Token::CollectionStart { ty }) => {
                     self.state_stack.push_back(ty.as_state());
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                 }
-                (Token::Root, Token::CollectionEnd { ty }) => {
-                    self.exit_collection(ty)?;
-                    self.write(ty.end_str())?;
-                    self.write(ty.end_str())?;
-                }
+                // (Token::Root, Token::CollectionEnd { ty }) => {
+                //     self.exit_collection(ty)?;
+                //     w!(self.write, ty.end_str());
+                //     w!(self.write, ty.end_str());
+                // }
+                // root -> //
                 (Token::Root, Token::Comment { ty, own_line: _ }) => {
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                     self.drain_comment(ty)?;
                 }
+                // root -> ""
                 (Token::Root, Token::Value { ty, first_char }) => {
                     self.drain_value(ty, *first_char)?;
                     next_token = Token::Root;
                 }
+                // {/[ -> {/[
                 (Token::CollectionStart { ty: _ }, Token::CollectionStart { ty }) => {
                     self.newline()?;
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
+                    self.set_awaiting_key(true)?;
                     self.state_stack.push_back(ty.as_state());
                 }
+                // {/[ -> }/]
                 (Token::CollectionStart { ty: _ }, Token::CollectionEnd { ty }) => {
-                    // `{}` or `[]`
                     self.exit_collection(ty)?;
-                    self.write(ty.end_str())?;
+                    w!(self.write, ty.end_str());
                 }
+                // {/[ -> //
                 (Token::CollectionStart { ty: _ }, Token::Comment { ty, own_line: _ }) => {
                     // Force own_line to be true
                     self.newline()?;
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                     self.drain_comment(ty)?;
                 }
+                // {/[ -> ""
                 (Token::CollectionStart { ty: _ }, Token::Value { ty, first_char }) => {
                     self.newline()?;
                     self.drain_value(ty, *first_char)?;
                     if self.is_awaiting_key()? {
-                        self.write(":")?;
+                        // We are in an object and we were awaiting a key
+                        // We got it, so write :
+                        w!(self.write, ":");
                     }
                     self.toggle_awaiting_key()?;
                 }
+                // }/] -> {/[
+                // This can't occur if the outer collection is an object (`{{}: []}` is not valid json)
+                // Therefore, we don't need to worry
                 (Token::CollectionEnd { ty: _ }, Token::CollectionStart { ty }) => {
                     self.comma()?;
                     self.newline()?;
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                     self.state_stack.push_back(ty.as_state());
                 }
+                // }/] -> }/]
                 (Token::CollectionEnd { ty: _ }, Token::CollectionEnd { ty }) => {
                     self.trailing_comma()?;
                     self.exit_collection(ty)?;
                     self.newline()?;
-                    self.write(ty.end_str())?;
+                    w!(self.write, ty.end_str());
                 }
+                // }/] -> //
                 (Token::CollectionEnd { ty: _ }, Token::Comment { ty, own_line: _ }) => {
                     // Force own_line to be true
                     self.trailing_comma()?;
                     self.newline()?;
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                     self.drain_comment(ty)?;
                 }
+                // }/] -> ""
                 (Token::CollectionEnd { ty: _ }, Token::Value { ty, first_char }) => {
-                    self.comma()?;
+                    if self.is_after_value()? {
+                        self.comma()?;
+                    }
                     self.newline()?;
                     self.drain_value(ty, *first_char)?;
                     if self.is_awaiting_key()? {
-                        self.write(":")?;
+                        w!(self.write, ":");
+                        // self.set_awaiting_key(false)?;
                     }
                     self.toggle_awaiting_key()?;
                 }
+                // // -> {/[
                 (Token::Comment { ty: _, own_line: _ }, Token::CollectionStart { ty }) => {
                     self.newline()?;
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                     self.state_stack.push_back(ty.as_state());
                 }
+                // // -> }/]
                 (Token::Comment { ty: _, own_line: _ }, Token::CollectionEnd { ty }) => {
                     self.exit_collection(ty)?;
                     self.newline()?;
-                    self.write(ty.end_str())?;
+                    w!(self.write, ty.end_str());
                     // self.trailing_comma()?;
                 }
+                // // -> //
                 (Token::Comment { ty: _, own_line: _ }, Token::Comment { ty, own_line: _ }) => {
                     // Force own_line to be true
                     self.newline()?;
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                     self.drain_comment(ty)?;
                 }
+                // // -> ""
                 (Token::Comment { ty: _, own_line: _ }, Token::Value { ty, first_char }) => {
                     self.newline()?;
                     self.drain_value(ty, *first_char)?;
 
                     if self.is_awaiting_key()? {
-                        self.write(":")?;
+                        w!(self.write, ":");
+                        // self.set_awaiting_key(false)?;
                     }
                     self.toggle_awaiting_key()?;
                 }
+                // "" -> {/[
                 (
                     Token::Value {
                         ty: _,
@@ -620,17 +658,22 @@ where
                     },
                     Token::CollectionStart { ty },
                 ) => {
-                    if self.is_awaiting_key()? {
+                    if self.is_after_value()? {
+                        // We are in an arry
                         self.comma()?;
                         self.newline()?;
-                    } else {
+                    } else if self.is_awaiting_key()? {
+                        // We are in an object
                         self.extra_spacing()?;
                     }
+                    // We just saw a value, so the next one must be a key
+                    self.set_awaiting_key(true)?;
 
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                     self.toggle_awaiting_key()?;
                     self.state_stack.push_back(ty.as_state());
                 }
+                // "" -> }/]
                 (
                     Token::Value {
                         ty: _,
@@ -641,8 +684,9 @@ where
                     self.trailing_comma()?;
                     self.exit_collection(ty)?;
                     self.newline()?;
-                    self.write(ty.end_str())?;
+                    w!(self.write, ty.end_str());
                 }
+                // "" -> //
                 (
                     Token::Value {
                         ty: _,
@@ -650,7 +694,7 @@ where
                     },
                     Token::Comment { ty, own_line },
                 ) => {
-                    if self.is_awaiting_key()? {
+                    if self.is_after_value()? {
                         self.comma()?;
                     }
 
@@ -659,9 +703,10 @@ where
                     } else {
                         self.extra_spacing()?;
                     }
-                    self.write(ty.start_str())?;
+                    w!(self.write, ty.start_str());
                     self.drain_comment(ty)?;
                 }
+                // "" -> ""
                 (
                     Token::Value {
                         ty: _,
@@ -669,20 +714,21 @@ where
                     },
                     Token::Value { ty, first_char },
                 ) => {
-                    if self.is_awaiting_key()? {
+                    if self.is_after_value()? {
                         self.comma()?;
                         self.newline()?;
-                    } else {
+                    } else if self.is_awaiting_key()? {
                         // The previous value was an object key, so put a space after the `:`
                         self.extra_spacing()?;
                     }
                     self.drain_value(ty, *first_char)?;
                     if self.is_awaiting_key()? {
-                        self.write(":")?;
+                        w!(self.write, ":");
                     }
                     self.toggle_awaiting_key()?;
                 }
 
+                // root -> eof
                 (Token::Root, Token::Eof) if self.state_stack.is_empty() => {
                     // We read the whole file successfully!
                     return Ok(());
@@ -824,12 +870,30 @@ where
         )
     }
 
+    fn is_after_value(&self) -> Result<bool> {
+        Ok(
+            match self.state_stack.back().ok_or(Error::UnexpectedValue)? {
+                CollectionState::Object { awaiting_key } => *awaiting_key,
+                CollectionState::Array => true,
+            },
+        )
+    }
+
     /// Toggles the `awaiting_key` value. Called after reading a value
     ///
     /// Has no affect if the current collection is an array, so this is safe to call after reading any value or CollectionEnd token
     fn toggle_awaiting_key(&mut self) -> Result<()> {
         match self.state_stack.back_mut().ok_or(Error::UnexpectedValue)? {
             CollectionState::Object { awaiting_key } => *awaiting_key = !*awaiting_key,
+            CollectionState::Array => {}
+        }
+
+        Ok(())
+    }
+
+    fn set_awaiting_key(&mut self, value: bool) -> Result<()> {
+        match self.state_stack.back_mut().ok_or(Error::UnexpectedValue)? {
+            CollectionState::Object { awaiting_key } => *awaiting_key = value,
             CollectionState::Array => {}
         }
 
