@@ -34,7 +34,8 @@ const C_STAR: u8 = b'*';
 const C_PLUS: u8 = b'+';
 const C_DOT: u8 = b'.';
 const C_MINUS: u8 = b'-';
-const C_E: u8 = b'-';
+const C_E: u8 = b'e';
+const C_E_CAPITAL: u8 = b'E';
 const C_F: u8 = b'f';
 const C_T: u8 = b't';
 const C_N: u8 = b'n';
@@ -392,12 +393,7 @@ where
                     w!(self.write, [c]);
                     c = self.peek_next_char()?;
                     // Any of the json numerical characters
-                    if c == C_PLUS
-                        || c == C_MINUS
-                        || c == C_DOT
-                        || (c as char).is_ascii_digit()
-                        || c == C_E
-                    {
+                    if is_json_numeric_char(c) {
                         self.next_char()?;
                     } else {
                         break;
@@ -865,12 +861,10 @@ where
                     ty: ValueType::Null,
                     first_char: c,
                 },
-
-                c @ C_PLUS | c @ C_MINUS | c if (c as char).is_ascii_digit() => Token::Value {
+                c if is_json_numeric_char(c) => Token::Value {
                     ty: ValueType::Number,
                     first_char: c,
                 },
-
                 c => {
                     eprintln!("Unexpected char?? {self:#?}");
                     break Err(Error::UnexpectedChar(c as char));
@@ -937,6 +931,15 @@ where
 
         Ok(())
     }
+}
+
+fn is_json_numeric_char(c: u8) -> bool {
+    c == C_PLUS
+        || c == C_MINUS
+        || c == C_E
+        || c == C_E_CAPITAL
+        || c == C_DOT
+        || (c as char).is_ascii_digit()
 }
 
 /// Gets the position in a buf that a block comment ends
