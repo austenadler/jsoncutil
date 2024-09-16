@@ -213,7 +213,7 @@ pub enum ValueType {
     // Unquoted values would be a bad idea. For example, there would be ambiguity for {x: true} (is it {"x": "true"} or {"x": true})
     // You could force `true`/`false`/`null`/numbers to be non-strings, but then you end up with the yaml `yes`/`no` problem
     // Also, if someone types a number like `-1.4e4.`, we don't want that converted to a string, we should keep it as an (invalid) number
-    // UnquotedString,
+    UnquotedString,
     String,
     Number,
     Boolean,
@@ -343,6 +343,17 @@ where
     /// Send the rest of the input to the writer until the end of the value is reached
     fn drain_value(&mut self, ty: &ValueType, first_char: u8) -> Result<()> {
         match (ty, first_char) {
+            (ValueType::UnquotedString, _) => {
+                // We will quote it
+                w!(self.write, [C_QUOTE, first_char]);
+
+                while (self.peek_next_char()? as char).is_ascii_alphanumeric() {
+                    w!(self.write, [self.next_char()?]);
+                }
+                // End quote
+                w!(self.write, [C_QUOTE]);
+                Ok(())
+            }
             (ValueType::String, C_QUOTE) => {
                 let mut next_char_escaped = false;
                 w!(self.write, [C_QUOTE]);
@@ -383,6 +394,7 @@ where
                     }
                 }
 
+                // End quote
                 let next_char = self.next_char()?;
                 w!(self.write, [next_char]);
 
@@ -852,7 +864,16 @@ where
                     }
                 }
                 C_COMMA => continue,
-
+                // TODO: Is alphanumeric or alphabetic?
+                c if (c as char).is_ascii_alphanumeric() && self.is_awaiting_key()? => {
+                    // We got an unquoted object key
+                    // Ex:
+                    //   {key: "value"}
+                    Token::Value {
+                        ty: ValueType::UnquotedString,
+                        first_char: c,
+                    }
+                }
                 c @ C_T | c @ C_F => Token::Value {
                     ty: ValueType::Boolean,
                     first_char: c,
