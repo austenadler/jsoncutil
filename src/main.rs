@@ -189,7 +189,8 @@ fn format_single_file(
             File::open(input_filename).context("Reading input")?,
         ))
     } else {
-        Box::new(BufReader::new(std::io::stdin().lock()))
+        // stdin is already buffered, so we don't need to wrap it in a bufreader
+        Box::new(std::io::stdin().lock())
     };
 
     // First, format jsonc
