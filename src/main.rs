@@ -31,13 +31,34 @@ struct Cli {
 
     #[clap(
         short = 'o',
-        long = "jsoncc-output",
-        help = "Output file; will be stdout if no output is specified"
+        long = "output",
+        help = "Output file; will be stdout if no output is specified",
+        conflicts_with = "inplace"
     )]
     output: Option<IoArg>,
 
-    #[clap(short = 'O', long = "json-output", help = "Output file for json")]
-    json_output: Option<PathBuf>,
+    #[clap(long = "json", short = 'j', help = "Output json instead of jsonc")]
+    output_json: bool,
+
+    #[clap(
+        long = "jsoncc-output",
+        help = "Output file for jsonc",
+        value_name = "FILE",
+        conflicts_with = "output",
+        conflicts_with = "output_json",
+        conflicts_with = "inplace"
+    )]
+    jsoncc_output: Option<IoArg>,
+
+    #[clap(
+        long = "json-output",
+        help = "Output file for json",
+        value_name = "FILE",
+        conflicts_with = "output",
+        conflicts_with = "output_json",
+        conflicts_with = "inplace"
+    )]
+    json_output: Option<IoArg>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -85,20 +106,64 @@ struct FmtArgs {
 impl Cli {
     /// Where should we format Jsonc output to?
     fn jsonc_output(&self) -> Option<IoArgRef<'_>> {
-        if self.fmt_args.inplace {
-            if !matches!(self.input, IoArg::File(_)) {
-                panic!("--inplace was specified, but input is not a file");
+        match (
+            self.output_json,
+            self.fmt_args.inplace,
+            self.jsoncc_output.is_some(),
+        ) {
+            (true, _, _) => {
+                // --json implies we aren't using --jsonc-output, so we will not have anything here
+                None
             }
+            (false, true, _) => {
+                // --inplace
+                if !matches!(self.input, IoArg::File(_)) {
+                    panic!("--inplace was specified, but input is not a file");
+                }
 
-            Some(self.input.as_output())
-        } else if self.output.is_some() {
-            self.output.as_ref().map(IoArg::as_output)
-        } else if self.json_output.is_some() {
-            // We don't want to output jsonc anywhere if they don't specify -o and they do specify -O
-            None
-        } else {
-            // If they don't have any output specified, default to stdout
-            Some(IoArgRef::Stdio)
+                Some(self.input.as_output())
+            }
+            (_, _, true) => {
+                // --output-json
+                self.jsoncc_output.as_ref().map(IoArg::as_output)
+            }
+            (false, _, _) => Some(
+                // No --json (default to stdout if unspecified)
+                self.output
+                    .as_ref()
+                    .map(IoArg::as_output)
+                    .unwrap_or(IoArgRef::Stdio),
+            ),
+        }
+    }
+
+    fn json_output(&self) -> Option<IoArgRef<'_>> {
+        // These will never conflict because clap(conflicts_with) is specified
+        match (
+            self.output_json,
+            self.fmt_args.inplace,
+            self.json_output.is_some(),
+        ) {
+            (true, true, _) => {
+                // --json --inplace
+                if !matches!(self.input, IoArg::File(_)) {
+                    panic!("--inplace was specified, but input is not a file");
+                }
+
+                Some(self.input.as_output())
+            }
+            (_, _, true) => {
+                // --output-json -
+                self.json_output.as_ref().map(IoArg::as_output)
+            }
+            (true, _, _) => Some(
+                // --json (default to stdout if unspecified)
+                self.output
+                    .as_ref()
+                    .map(IoArg::as_output)
+                    .unwrap_or(IoArgRef::Stdio),
+            ),
+            _ => None,
         }
     }
 }
@@ -158,16 +223,13 @@ fn main() -> Result<()> {
     match &cli.command {
         None => {
             // TODO: Figure out how to validate this in clap Parser
-            if cli.fmt_args.compact && cli.json_output.is_none() {
-                bail!("Cannot compact format jsonc. Specify --json-output if you want to use --compact");
-            }
-            if cli.fmt_args.inplace && cli.output.is_some() {
-                bail!("Cannot format --inplace when --output is specified");
+            if cli.fmt_args.compact && cli.json_output.is_none() && !cli.output_json {
+                bail!("Cannot compact format jsonc. Specify --json or use --json-output if you want to use --compact");
             }
             format_single_file(
                 &cli.input.as_output(),
                 cli.jsonc_output().as_ref(),
-                cli.json_output.as_ref(),
+                cli.json_output().as_ref(),
                 &cli.fmt_args,
             )?;
         }
@@ -181,7 +243,7 @@ fn main() -> Result<()> {
 fn format_single_file(
     input: &IoArgRef,
     jsonc_output: Option<&IoArgRef>,
-    json_output: Option<impl AsRef<Path>>,
+    json_output: Option<&IoArgRef>,
     fmt_args: &FmtArgs,
 ) -> Result<()> {
     let mut input: Box<dyn BufRead> = if let IoArgRef::File(input_filename) = input {
@@ -213,21 +275,26 @@ fn format_single_file(
     }
 
     // Format json next
-    if let Some(ref json_output_file) = json_output {
+    if let Some(ref json_output) = json_output {
         let mode = if fmt_args.compact {
             Mode::CompactJson
         } else {
             Mode::Json
         };
 
-        if json_output_file.as_ref().as_os_str() == "-" {
-            parser::Parser::new(mode, &mut input, BufWriter::new(std::io::stdout()))
-                .format_buf()
-                .context("Formatting file")?
-        } else {
-            AtomicFile::new(json_output_file, AllowOverwrite)
-                .write(|f| parser::Parser::new(mode, &mut input, BufWriter::new(f)).format_buf())
-                .context("Writing json output")?;
+        match json_output {
+            IoArgRef::Stdio => {
+                parser::Parser::new(mode, &mut input, BufWriter::new(std::io::stdout()))
+                    .format_buf()
+                    .context("Formatting file")?
+            }
+            IoArgRef::File(output_file) => {
+                AtomicFile::new(output_file, AllowOverwrite)
+                    .write(|f| {
+                        parser::Parser::new(mode, &mut input, BufWriter::new(f)).format_buf()
+                    })
+                    .context("Writing json output")?;
+            }
         }
     }
 
@@ -314,7 +381,7 @@ fn watch(cli: &Cli, args: &WatchArgs) -> Result<()> {
                 match format_single_file(
                     &IoArgRef::File(&path),
                     Some(&IoArgRef::File(&path)),
-                    None::<&Path>,
+                    None,
                     &cli.fmt_args,
                 ) {
                     Ok(()) => {
