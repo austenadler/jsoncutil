@@ -37,7 +37,12 @@ struct Cli {
     )]
     output: Option<IoArg>,
 
-    #[clap(long = "json", short = 'j', help = "Output json instead of jsonc")]
+    #[clap(
+        long = "json",
+        short = 'j',
+        help = "Output json instead of jsonc",
+        default_value_if("compact", "true", Some("true"))
+    )]
     output_json: bool,
 
     #[clap(
