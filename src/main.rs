@@ -5,16 +5,18 @@ use anyhow::{bail, Context, Error, Result};
 use atomicwrites::{AtomicFile, OverwriteBehavior::AllowOverwrite};
 use clap::{Args, Parser, Subcommand};
 use crossbeam_channel::{Receiver, Sender};
+use interprocess::unnamed_pipe;
+use jsoncutil::csv_parser::csv_reader_to_json_writer;
+use jsoncutil::IoArg;
+use jsoncutil::IoArgRef;
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use parser::Mode;
 use std::{
     collections::HashSet,
-    convert::Infallible,
     ffi::OsString,
     fs::File,
     io::{BufRead, BufReader, BufWriter},
-    path::{Path, PathBuf},
-    str::FromStr,
+    path::PathBuf,
     time::Duration,
 };
 
@@ -45,7 +47,7 @@ struct Cli {
         short = 'j',
         help = "Output json instead of jsonc",
         default_value_if("compact", "true", Some("true")),
-        default_value_if("input_csv", "true", Some("true"))
+        // default_value_if("input_csv", "true", Some("true"))
     )]
     output_json: bool,
 
@@ -177,40 +179,6 @@ impl Cli {
     }
 }
 
-/// An argument that represents a file or stdin/stdout
-#[derive(Debug, Clone)]
-enum IoArg {
-    Stdio,
-    File(PathBuf),
-}
-
-impl Default for IoArg {
-    fn default() -> Self {
-        Self::Stdio
-    }
-}
-
-impl FromStr for IoArg {
-    type Err = Infallible;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s == "-" {
-            Ok(Self::Stdio)
-        } else {
-            PathBuf::from_str(s).map(Self::File)
-        }
-    }
-}
-
-impl IoArg {
-    fn as_output(&self) -> IoArgRef {
-        match self {
-            Self::Stdio => IoArgRef::Stdio,
-            Self::File(f) => IoArgRef::File(f),
-        }
-    }
-}
-
 // impl<'a> AsRef<Output<'a>> for IoArg {
 //     fn as_ref<'b>(&'b self) -> &'b Output<'a> {
 //         match self {
@@ -220,11 +188,11 @@ impl IoArg {
 //     }
 // }
 
-#[derive(Debug)]
-enum IoArgRef<'a> {
-    Stdio,
-    File(&'a Path),
-}
+// #[derive(Debug)]
+// pub(crate) enum IoArgRef<'a> {
+//     Stdio,
+//     File(&'a Path),
+// }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -236,19 +204,17 @@ fn main() -> Result<()> {
                 bail!("Cannot compact format jsonc. Specify --json or use --json-output if you want to use --compact");
             }
 
-            let input = input_to_reader(&cli.input.as_output())?;
-
             if cli.input_csv {
                 // The input is CSV, so we hvae to use the csv parser
                 format_single_csv(
-                    input,
+                    cli.input.clone(),
                     cli.jsonc_output().as_ref(),
                     cli.json_output().as_ref(),
                     &cli.fmt_args,
                 )?;
             } else {
                 format_single_file(
-                    input,
+                    cli.input.as_output().input_to_reader()?,
                     cli.jsonc_output().as_ref(),
                     cli.json_output().as_ref(),
                     &cli.fmt_args,
@@ -261,23 +227,39 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn input_to_reader(input: &IoArgRef) -> Result<Box<dyn BufRead>> {
-    Ok(if let IoArgRef::File(input_filename) = input {
-        Box::new(BufReader::new(
-            File::open(input_filename).context("Reading input")?,
-        ))
-    } else {
-        // stdin is already buffered, so we don't need to wrap it in a bufreader
-        Box::new(std::io::stdin().lock())
-    })
-}
-
 fn format_single_csv(
-    input: Box<dyn BufRead>,
+    input: IoArg,
     jsonc_output: Option<&IoArgRef>,
     json_output: Option<&IoArgRef>,
     fmt_args: &FmtArgs,
 ) -> Result<()> {
+    let (writer, reader) = unnamed_pipe::pipe()?;
+
+    let handle = std::thread::spawn(move || -> Result<()> {
+        // let br = input_to_reader(&input)?;
+        csv_reader_to_json_writer(input, writer)?;
+        Ok(())
+    });
+
+    let formatting_result = format_single_file(
+        Box::new(BufReader::new(reader)),
+        jsonc_output,
+        json_output,
+        fmt_args,
+    )
+    .context("Could not format csv output");
+
+    let parsing_result = handle
+        .join()
+        .map_err(|e| anyhow::anyhow!("Could not join thread: {e:?}"))?
+        .context("Could not parse as CSV");
+
+    if parsing_result.is_err() || formatting_result.is_err() {
+        eprintln!("Parsing as CSV: {parsing_result:?}");
+        eprintln!("Formatting parsed CSV: {formatting_result:?}");
+        bail!("Could not format CSV");
+    }
+
     Ok(())
 }
 
@@ -288,6 +270,8 @@ fn format_single_file(
     json_output: Option<&IoArgRef>,
     fmt_args: &FmtArgs,
 ) -> Result<()> {
+    // let mut input = input_to_reader(input)?;
+
     // First, format jsonc
     if let Some(jsonc_output) = jsonc_output {
         match jsonc_output {
@@ -412,7 +396,7 @@ fn watch(cli: &Cli, args: &WatchArgs) -> Result<()> {
                 eprintln!("Got result: {path:#?}");
 
                 match format_single_file(
-                    &IoArgRef::File(&path),
+                    Box::new(BufReader::new(File::open(&path).context("Reading input")?)),
                     Some(&IoArgRef::File(&path)),
                     None,
                     &cli.fmt_args,

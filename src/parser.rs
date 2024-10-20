@@ -98,6 +98,8 @@ pub enum Error {
     /// A collection end token was found in an unexpected position
     #[error("Unexpected collection ending")]
     UnexpectedCollectionEnd,
+    #[error("Unexpected state transition {0:?} => {1:?}")]
+    UnexpectedStateTransition(Token, Token),
     /// An IO error occured when reading or writing
     #[error("IO Error: {0}")]
     Io(#[from] std::io::Error),
@@ -796,7 +798,8 @@ where
                 }
 
                 (a, b) => {
-                    panic!("Invalid state transition: {a:?} => {b:?}")
+                    return Err(Error::UnexpectedStateTransition(a, *b));
+                    // panic!("Invalid state transition: {a:?} => {b:?}")
                 }
             }
 
