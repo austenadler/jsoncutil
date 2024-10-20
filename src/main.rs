@@ -37,11 +37,15 @@ struct Cli {
     )]
     output: Option<IoArg>,
 
+    #[clap(long, help = "Treat input as CSV")]
+    input_csv: bool,
+
     #[clap(
         long = "json",
         short = 'j',
         help = "Output json instead of jsonc",
-        default_value_if("compact", "true", Some("true"))
+        default_value_if("compact", "true", Some("true")),
+        default_value_if("input_csv", "true", Some("true"))
     )]
     output_json: bool,
 
@@ -231,12 +235,25 @@ fn main() -> Result<()> {
             if cli.fmt_args.compact && cli.json_output.is_none() && !cli.output_json {
                 bail!("Cannot compact format jsonc. Specify --json or use --json-output if you want to use --compact");
             }
-            format_single_file(
-                &cli.input.as_output(),
-                cli.jsonc_output().as_ref(),
-                cli.json_output().as_ref(),
-                &cli.fmt_args,
-            )?;
+
+            let input = input_to_reader(&cli.input.as_output())?;
+
+            if cli.input_csv {
+                // The input is CSV, so we hvae to use the csv parser
+                format_single_csv(
+                    input,
+                    cli.jsonc_output().as_ref(),
+                    cli.json_output().as_ref(),
+                    &cli.fmt_args,
+                )?;
+            } else {
+                format_single_file(
+                    input,
+                    cli.jsonc_output().as_ref(),
+                    cli.json_output().as_ref(),
+                    &cli.fmt_args,
+                )?;
+            }
         }
         Some(Command::Watch(a)) => watch(&cli, a)?,
     }
@@ -244,22 +261,33 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-// TODO: Accept a [`FmtArgs`]
-fn format_single_file(
-    input: &IoArgRef,
-    jsonc_output: Option<&IoArgRef>,
-    json_output: Option<&IoArgRef>,
-    fmt_args: &FmtArgs,
-) -> Result<()> {
-    let mut input: Box<dyn BufRead> = if let IoArgRef::File(input_filename) = input {
+fn input_to_reader(input: &IoArgRef) -> Result<Box<dyn BufRead>> {
+    Ok(if let IoArgRef::File(input_filename) = input {
         Box::new(BufReader::new(
             File::open(input_filename).context("Reading input")?,
         ))
     } else {
         // stdin is already buffered, so we don't need to wrap it in a bufreader
         Box::new(std::io::stdin().lock())
-    };
+    })
+}
 
+fn format_single_csv(
+    input: Box<dyn BufRead>,
+    jsonc_output: Option<&IoArgRef>,
+    json_output: Option<&IoArgRef>,
+    fmt_args: &FmtArgs,
+) -> Result<()> {
+    Ok(())
+}
+
+// TODO: Accept a [`FmtArgs`]
+fn format_single_file(
+    mut input: Box<dyn BufRead>,
+    jsonc_output: Option<&IoArgRef>,
+    json_output: Option<&IoArgRef>,
+    fmt_args: &FmtArgs,
+) -> Result<()> {
     // First, format jsonc
     if let Some(jsonc_output) = jsonc_output {
         match jsonc_output {
