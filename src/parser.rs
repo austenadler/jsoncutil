@@ -782,6 +782,13 @@ where
                     self.toggle_awaiting_key();
                 }
 
+                // // -> eof
+                (Token::Comment { ty: _, own_line: _ }, Token::Eof) => {
+                    // The ending was a comment, so we need to add a trailing newline
+                    w!(self.write, "\n");
+                    return Ok(());
+                }
+
                 // root -> eof
                 (Token::Root, Token::Eof) if self.state_stack.is_empty() => {
                     // We read the whole file successfully!
