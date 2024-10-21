@@ -1,3 +1,4 @@
+use crate::CsvArgs;
 use crate::IoArg;
 use std::io::Write;
 
@@ -10,7 +11,11 @@ enum ParserState {
     InQuotedField { maybe_ending: bool },
 }
 
-pub fn csv_reader_to_json_writer(input: IoArg, mut output: impl Write) -> Result<()> {
+pub fn csv_reader_to_json_writer(
+    args: CsvArgs,
+    input: IoArg,
+    mut output: impl Write,
+) -> Result<()> {
     let mut input = input
         .as_output()
         .input_to_reader()
@@ -41,11 +46,11 @@ pub fn csv_reader_to_json_writer(input: IoArg, mut output: impl Write) -> Result
                     // n += 1;
                     continue;
                 }
-                b',' => {
+                c if c == args.separator => {
                     output.write_all(b"[\"\",\"")?;
                     state = ParserState::InUnquotedField { start: true };
                 }
-                b'"' => {
+                c if c == args.quote_character => {
                     output.write_all(b"[\"")?;
                     state = ParserState::InQuotedField {
                         maybe_ending: false,
@@ -58,11 +63,11 @@ pub fn csv_reader_to_json_writer(input: IoArg, mut output: impl Write) -> Result
                 }
             },
             ParserState::InUnquotedField { start } => match buf[0] {
-                b',' => {
+                c if c == args.separator => {
                     output.write_all(b"\",\"")?;
                     state = ParserState::InUnquotedField { start: true };
                 }
-                b'"' => {
+                c if c == args.quote_character => {
                     if start {
                         state = ParserState::InQuotedField {
                             maybe_ending: false,
@@ -86,7 +91,7 @@ pub fn csv_reader_to_json_writer(input: IoArg, mut output: impl Write) -> Result
             ParserState::InQuotedField {
                 maybe_ending: false,
             } => match buf[0] {
-                b'"' => {
+                c if c == args.quote_character => {
                     state = ParserState::InQuotedField { maybe_ending: true };
                 }
                 c => {
@@ -94,14 +99,14 @@ pub fn csv_reader_to_json_writer(input: IoArg, mut output: impl Write) -> Result
                 }
             },
             ParserState::InQuotedField { maybe_ending: true } => match buf[0] {
-                b'"' => {
+                c if c == args.quote_character => {
                     // We got a second quote, so we aren't ending
                     write_escaped_json_char(&mut output, b'"')?;
                     state = ParserState::InQuotedField {
                         maybe_ending: false,
                     };
                 }
-                b',' => {
+                c if c == args.separator => {
                     output.write_all(b"\",\"")?;
                     state = ParserState::InUnquotedField { start: true };
                 }

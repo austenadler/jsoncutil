@@ -1,3 +1,4 @@
+use clap::Args;
 use std::{
     convert::Infallible,
     fs::File,
@@ -62,4 +63,30 @@ impl IoArg {
             Self::File(f) => IoArgRef::File(f),
         }
     }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct CsvArgs {
+    #[clap(help = "CSV Input file, or `-` for stdin", default_value = "-")]
+    pub input: IoArg,
+
+    #[clap(short = 's', long, help = "CSV record separator", default_value = ",", value_parser = parse_single_char)]
+    pub separator: u8,
+    #[clap(short = 'q', long, help = "CSV quote character", default_value = "\"", value_parser = parse_single_char)]
+    pub quote_character: u8,
+    // #[clap(short = 'H', long, help = "Skip the header row of the CSV")]
+    // pub skip_header: bool,
+}
+
+fn parse_single_char(arg: &str) -> Result<u8, &'static str> {
+    if arg.len() != 1 {
+        return Err("Only one char allowed");
+    }
+
+    let bytes = arg.as_bytes();
+    if bytes.len() != 1 {
+        return Err("Only ascii supported");
+    }
+
+    Ok(bytes[0])
 }

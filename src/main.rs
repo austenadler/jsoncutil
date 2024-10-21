@@ -7,6 +7,7 @@ use clap::{Args, Parser, Subcommand};
 use crossbeam_channel::{Receiver, Sender};
 use interprocess::unnamed_pipe;
 use jsoncutil::csv_parser::csv_reader_to_json_writer;
+use jsoncutil::CsvArgs;
 use jsoncutil::IoArg;
 use jsoncutil::IoArgRef;
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
@@ -39,15 +40,11 @@ struct Cli {
     )]
     output: Option<IoArg>,
 
-    #[clap(long, help = "Treat input as CSV")]
-    input_csv: bool,
-
     #[clap(
         long = "json",
         short = 'j',
         help = "Output json instead of jsonc",
-        default_value_if("compact", "true", Some("true")),
-        // default_value_if("input_csv", "true", Some("true"))
+        default_value_if("compact", "true", Some("true"))
     )]
     output_json: bool,
 
@@ -78,6 +75,9 @@ enum Command {
     // Fmt(FmtArgs),
     #[clap(about = "Watch a file or directory for changes")]
     Watch(WatchArgs),
+
+    #[clap(about = "Use a CSV file for the input instead of JSONC")]
+    Csv(CsvArgs),
 }
 
 #[derive(Args, Debug)]
@@ -197,31 +197,31 @@ impl Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // TODO: Figure out how to validate this in clap Parser
+    if cli.fmt_args.compact && cli.json_output.is_none() && !cli.output_json {
+        bail!("Cannot compact format jsonc. Specify --json or use --json-output if you want to use --compact");
+    }
+
     match &cli.command {
         None => {
-            // TODO: Figure out how to validate this in clap Parser
-            if cli.fmt_args.compact && cli.json_output.is_none() && !cli.output_json {
-                bail!("Cannot compact format jsonc. Specify --json or use --json-output if you want to use --compact");
-            }
-
-            if cli.input_csv {
-                // The input is CSV, so we hvae to use the csv parser
-                format_single_csv(
-                    cli.input.clone(),
-                    cli.jsonc_output().as_ref(),
-                    cli.json_output().as_ref(),
-                    &cli.fmt_args,
-                )?;
-            } else {
-                format_single_file(
-                    cli.input.as_output().input_to_reader()?,
-                    cli.jsonc_output().as_ref(),
-                    cli.json_output().as_ref(),
-                    &cli.fmt_args,
-                )?;
-            }
+            format_single_file(
+                cli.input.as_output().input_to_reader()?,
+                cli.jsonc_output().as_ref(),
+                cli.json_output().as_ref(),
+                &cli.fmt_args,
+            )?;
         }
         Some(Command::Watch(a)) => watch(&cli, a)?,
+        Some(Command::Csv(csv_args)) => {
+            // The input is CSV, so we hvae to use the csv parser
+            format_single_csv(
+                csv_args.input.clone(),
+                cli.jsonc_output().as_ref(),
+                cli.json_output().as_ref(),
+                &cli.fmt_args,
+                csv_args,
+            )?;
+        }
     }
 
     Ok(())
@@ -232,12 +232,14 @@ fn format_single_csv(
     jsonc_output: Option<&IoArgRef>,
     json_output: Option<&IoArgRef>,
     fmt_args: &FmtArgs,
+    csv_args: &CsvArgs,
 ) -> Result<()> {
     let (writer, reader) = unnamed_pipe::pipe()?;
 
+    let csv_args = csv_args.clone();
     let handle = std::thread::spawn(move || -> Result<()> {
         // let br = input_to_reader(&input)?;
-        csv_reader_to_json_writer(input, writer)?;
+        csv_reader_to_json_writer(csv_args, input, writer)?;
         Ok(())
     });
 
