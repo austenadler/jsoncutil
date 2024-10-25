@@ -1,5 +1,6 @@
 use crate::CsvArgs;
 use crate::IoArg;
+use std::io::BufRead;
 use std::io::Write;
 
 use anyhow::{bail, Context, Result};
@@ -13,14 +14,9 @@ enum ParserState {
 
 pub fn csv_reader_to_json_writer(
     args: CsvArgs,
-    input: IoArg,
+    input: &mut impl BufRead,
     mut output: impl Write,
 ) -> Result<()> {
-    let mut input = input
-        .as_output()
-        .input_to_reader()
-        .context("Converting input file to a reader")?;
-
     let mut state = ParserState::WaitingForRow { saw_cr: false };
 
     if args.wrap {

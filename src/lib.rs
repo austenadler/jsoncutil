@@ -1,8 +1,12 @@
+use atomicwrites::{
+    AtomicFile,
+    OverwriteBehavior::{self, AllowOverwrite},
+};
 use clap::Args;
 use std::{
     convert::Infallible,
     fs::File,
-    io::{BufRead, BufReader},
+    io::{stdin, stdout, BufRead, BufReader, Write},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -18,24 +22,34 @@ pub enum IoArgRef<'a> {
     File(&'a Path),
 }
 
-impl<'a> IoArgRef<'a> {
-    pub fn input_to_reader(&self) -> Result<Box<dyn BufRead>> {
-        Ok(if let IoArgRef::File(input_filename) = self {
-            Box::new(BufReader::new(
-                File::open(input_filename).context("Reading input")?,
-            ))
-        } else {
-            // stdin is already buffered, so we don't need to wrap it in a bufreader
-            Box::new(std::io::stdin().lock())
-        })
-    }
-}
-
 /// An argument that represents a file or stdin/stdout
 #[derive(Debug, Clone)]
 pub enum IoArg {
     Stdio,
     File(PathBuf),
+}
+
+impl IoArg {
+    pub fn to_writer(&self) -> Writer {
+        match self {
+            Self::Stdio => Writer::BufferedWriter(Box::new(stdout().lock())),
+            Self::File(f) => Writer::AtomicFile(AtomicFile::new(f, ATOMIC_FILE_OPTIONS)),
+        }
+    }
+
+    pub fn to_reader(&self) -> Result<Box<dyn BufRead>> {
+        Ok(match self {
+            Self::Stdio => Box::new(stdin().lock()),
+            Self::File(f) => Box::new(BufReader::new(File::open(f).context("Reading input")?)),
+        })
+    }
+}
+
+pub const ATOMIC_FILE_OPTIONS: OverwriteBehavior = AllowOverwrite;
+
+pub enum Writer {
+    BufferedWriter(Box<dyn Write>),
+    AtomicFile(AtomicFile),
 }
 
 impl Default for IoArg {

@@ -2,16 +2,20 @@ mod indentor;
 mod parser;
 
 use anyhow::{bail, Context, Error, Result};
+use atomicwrites::OverwriteBehavior;
 use atomicwrites::{AtomicFile, OverwriteBehavior::AllowOverwrite};
 use clap::{Args, Parser, Subcommand};
 use crossbeam_channel::{Receiver, Sender};
 use interprocess::unnamed_pipe;
 use jsoncutil::csv_parser::csv_reader_to_json_writer;
-use jsoncutil::CsvArgs;
 use jsoncutil::IoArg;
 use jsoncutil::IoArgRef;
+use jsoncutil::Writer;
+use jsoncutil::{CsvArgs, ATOMIC_FILE_OPTIONS};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use parser::Mode;
+use std::io::{stdout, Write};
+use std::path::Path;
 use std::{
     collections::HashSet,
     ffi::OsString,
@@ -121,7 +125,7 @@ struct FmtArgs {
 
 impl Cli {
     /// Where should we format Jsonc output to?
-    fn jsonc_output(&self) -> Option<IoArgRef<'_>> {
+    fn jsonc_output(&self) -> Option<Writer> {
         match (
             self.output_json,
             self.fmt_args.inplace,
@@ -137,23 +141,23 @@ impl Cli {
                     panic!("--inplace was specified, but input is not a file");
                 }
 
-                Some(self.input.as_output())
+                Some(self.input.to_writer())
             }
             (_, _, true) => {
                 // --output-json
-                self.jsoncc_output.as_ref().map(IoArg::as_output)
+                self.jsoncc_output.as_ref().map(IoArg::to_writer)
             }
             (false, _, _) => Some(
                 // No --json (default to stdout if unspecified)
                 self.output
                     .as_ref()
-                    .map(IoArg::as_output)
-                    .unwrap_or(IoArgRef::Stdio),
+                    .map(IoArg::to_writer)
+                    .unwrap_or_else(|| Writer::BufferedWriter(Box::new(stdout().lock()))),
             ),
         }
     }
 
-    fn json_output(&self) -> Option<IoArgRef<'_>> {
+    fn json_output(&self) -> Option<Writer> {
         // These will never conflict because clap(conflicts_with) is specified
         match (
             self.output_json,
@@ -166,18 +170,18 @@ impl Cli {
                     panic!("--inplace was specified, but input is not a file");
                 }
 
-                Some(self.input.as_output())
+                Some(self.input.to_writer())
             }
             (_, _, true) => {
                 // --output-json -
-                self.json_output.as_ref().map(IoArg::as_output)
+                self.json_output.as_ref().map(IoArg::to_writer)
             }
             (true, _, _) => Some(
                 // --json (default to stdout if unspecified)
                 self.output
                     .as_ref()
-                    .map(IoArg::as_output)
-                    .unwrap_or(IoArgRef::Stdio),
+                    .map(IoArg::to_writer)
+                    .unwrap_or_else(|| Writer::BufferedWriter(Box::new(stdout().lock()))),
             ),
             _ => None,
         }
@@ -210,9 +214,9 @@ fn main() -> Result<()> {
     match &cli.command {
         None => {
             format_single_file(
-                cli.input.as_output().input_to_reader()?,
-                cli.jsonc_output().as_ref(),
-                cli.json_output().as_ref(),
+                cli.input.to_reader()?,
+                cli.jsonc_output(),
+                cli.json_output(),
                 &cli.fmt_args,
             )?;
         }
@@ -221,8 +225,8 @@ fn main() -> Result<()> {
             // The input is CSV, so we hvae to use the csv parser
             format_single_csv(
                 csv_args.input.clone(),
-                cli.jsonc_output().as_ref(),
-                cli.json_output().as_ref(),
+                cli.jsonc_output(),
+                cli.json_output(),
                 &cli.fmt_args,
                 csv_args,
             )?;
@@ -234,8 +238,8 @@ fn main() -> Result<()> {
 
 fn format_single_csv(
     input: IoArg,
-    jsonc_output: Option<&IoArgRef>,
-    json_output: Option<&IoArgRef>,
+    jsonc_output: Option<Writer>,
+    json_output: Option<Writer>,
     fmt_args: &FmtArgs,
     csv_args: &CsvArgs,
 ) -> Result<()> {
@@ -244,7 +248,7 @@ fn format_single_csv(
     let csv_args = csv_args.clone();
     let handle = std::thread::spawn(move || -> Result<()> {
         // let br = input_to_reader(&input)?;
-        csv_reader_to_json_writer(csv_args, input, writer)?;
+        csv_reader_to_json_writer(csv_args, &mut input.to_reader()?, writer)?;
         Ok(())
     });
 
@@ -273,66 +277,57 @@ fn format_single_csv(
 // TODO: Accept a [`FmtArgs`]
 fn format_single_file(
     mut input: Box<dyn BufRead>,
-    jsonc_output: Option<&IoArgRef>,
-    json_output: Option<&IoArgRef>,
+    jsonc_output2: Option<Writer>,
+    json_output2: Option<Writer>,
     fmt_args: &FmtArgs,
 ) -> Result<()> {
     // let mut input = input_to_reader(input)?;
 
     // First, format jsonc
-    if let Some(jsonc_output) = jsonc_output {
+    if let Some(jsonc_output) = jsonc_output2 {
+        let parser = parser::Parser::new(
+            parser::Mode::Jsoncc,
+            // &mut input,
+            // BufWriter::new(std::io::stdout()),
+        );
+
         match jsonc_output {
-            IoArgRef::Stdio => parser::Parser::new(
-                parser::Mode::Jsoncc,
-                &mut input,
-                BufWriter::new(std::io::stdout()),
-            )
-            .format_buf()
-            .context("Formatting file")?,
-            IoArgRef::File(output_file) => AtomicFile::new(output_file, AllowOverwrite)
-                .write(|f| {
-                    parser::Parser::new(parser::Mode::CompactJson, &mut input, BufWriter::new(f))
-                        .format_buf()
-                })
-                .context("Formatting file")?,
+            Writer::BufferedWriter(mut w) => parser.format_buf(&mut input, &mut w)?,
+            Writer::AtomicFile(f) => {
+                f.write(|w| parser.format_buf(&mut input, &mut BufWriter::new(w)))?
+            }
         }
     }
 
     // Format json next
-    if let Some(ref json_output) = json_output {
+    if let Some(json_output) = json_output2 {
         let mode = if fmt_args.compact {
             Mode::CompactJson
         } else {
             Mode::Json
         };
 
+        let parser = parser::Parser::new(mode);
+
         match json_output {
-            IoArgRef::Stdio => {
-                parser::Parser::new(mode, &mut input, BufWriter::new(std::io::stdout()))
-                    .format_buf()
-                    .context("Formatting file")?
-            }
-            IoArgRef::File(output_file) => {
-                AtomicFile::new(output_file, AllowOverwrite)
-                    .write(|f| {
-                        parser::Parser::new(mode, &mut input, BufWriter::new(f)).format_buf()
-                    })
-                    .context("Writing json output")?;
+            Writer::BufferedWriter(mut w) => parser.format_buf(&mut input, &mut w)?,
+            Writer::AtomicFile(f) => {
+                f.write(|w| parser.format_buf(&mut input, &mut BufWriter::new(w)))?
             }
         }
     }
 
     // Validate - Just duplicate code here. If they want to validate, it adds a little extra cost anyway
     // Reformatting is probably not a big cost
-    if fmt_args.validate {
-        // TODO: Not
-        let mut buf = vec![];
-        parser::Parser::new(Mode::CompactJson, &mut input, BufWriter::new(&mut buf))
-            .format_buf()
-            .context("Formatting file")?;
+    // if fmt_args.validate {
+    //     // TODO: Not
+    //     let mut buf = vec![];
+    //     parser::Parser::new(Mode::CompactJson, &mut input, BufWriter::new(&mut buf))
+    //         .format_buf()
+    //         .context("Formatting file")?;
 
-        oxidized_json_checker::validate(&buf[..])?;
-    }
+    //     oxidized_json_checker::validate(&buf[..])?;
+    // }
 
     Ok(())
 }
@@ -404,7 +399,10 @@ fn watch(cli: &Cli, args: &WatchArgs) -> Result<()> {
 
                 match format_single_file(
                     Box::new(BufReader::new(File::open(&path).context("Reading input")?)),
-                    Some(&IoArgRef::File(&path)),
+                    Some(Writer::AtomicFile(AtomicFile::new(
+                        &path,
+                        ATOMIC_FILE_OPTIONS,
+                    ))),
                     None,
                     &cli.fmt_args,
                 ) {
