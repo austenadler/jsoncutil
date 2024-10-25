@@ -239,9 +239,9 @@ impl Parser {
         Self { mode }
     }
 
-    pub fn format_buf<R: BufRead, W: Write>(self, input: R, write: W) -> Result<()> {
+    pub fn format_buf<R: BufRead, W: Write>(self, read: R, write: W) -> Result<()> {
         ParserInner {
-            input,
+            read,
             write,
             mode: self.mode,
             state_stack: VecDeque::new(),
@@ -262,7 +262,7 @@ where
 {
     /// Input reader
     #[derivative(Debug = "ignore")]
-    input: R,
+    read: R,
     /// Output writer
     #[derivative(Debug = "ignore")]
     write: W,
@@ -294,7 +294,7 @@ where
         let mut maybe_block_end = false;
 
         loop {
-            let buf = self.input.fill_buf()?;
+            let buf = self.read.fill_buf()?;
 
             if buf.is_empty() {
                 return Err(Error::BufferEmpty);
@@ -307,7 +307,7 @@ where
                             w!(self.write, &buf[0..idx]);
                         }
 
-                        self.input.consume(idx);
+                        self.read.consume(idx);
                         break;
                     }
                     None => {
@@ -315,7 +315,7 @@ where
                             w!(self.write, buf);
                         }
                         let len = buf.len();
-                        self.input.consume(len);
+                        self.read.consume(len);
                     }
                 },
                 CommentType::Block => {
@@ -335,7 +335,7 @@ where
                                 w!(self.write, &buf[0..idx]);
                             }
 
-                            self.input.consume(idx);
+                            self.read.consume(idx);
                             break;
                         }
                         BlockCommentEnd::MaybeEnd => {
@@ -343,7 +343,7 @@ where
                                 w!(self.write, buf);
                             }
                             let len = buf.len();
-                            self.input.consume(len);
+                            self.read.consume(len);
                             maybe_block_end = true;
                         }
                         BlockCommentEnd::None => {
@@ -351,7 +351,7 @@ where
                                 w!(self.write, buf);
                             }
                             let len = buf.len();
-                            self.input.consume(len);
+                            self.read.consume(len);
                         }
                     }
                 }
@@ -394,7 +394,7 @@ where
                     }
                     next_char_escaped = false;
 
-                    let buf = self.input.fill_buf()?;
+                    let buf = self.read.fill_buf()?;
 
                     if buf.is_empty() {
                         return Err(Error::BufferEmpty);
@@ -403,19 +403,19 @@ where
                     match string_end(buf) {
                         StringEnd::Position(idx) => {
                             w!(self.write, &buf[0..idx]);
-                            self.input.consume(idx);
+                            self.read.consume(idx);
                             break;
                         }
                         StringEnd::MaybeEnd => {
                             w!(self.write, buf);
                             let len = buf.len();
-                            self.input.consume(len);
+                            self.read.consume(len);
                             next_char_escaped = true;
                         }
                         StringEnd::None => {
                             w!(self.write, buf);
                             let len = buf.len();
-                            self.input.consume(len);
+                            self.read.consume(len);
                         }
                     }
                 }
@@ -445,7 +445,7 @@ where
             // true
             (ValueType::Boolean, C_T) => {
                 let mut chr = [0_u8; 3];
-                self.input.read_exact(&mut chr)?;
+                self.read.read_exact(&mut chr)?;
 
                 if chr == *b"rue" {
                     w!(self.write, "true");
@@ -457,7 +457,7 @@ where
             // false
             (ValueType::Boolean, C_F) => {
                 let mut chr = [0_u8; 4];
-                self.input.read_exact(&mut chr)?;
+                self.read.read_exact(&mut chr)?;
 
                 if chr == *b"alse" {
                     w!(self.write, "false");
@@ -469,7 +469,7 @@ where
             // null
             (ValueType::Null, C_N) => {
                 let mut chr = [0_u8; 3];
-                self.input.read_exact(&mut chr)?;
+                self.read.read_exact(&mut chr)?;
 
                 if chr == *b"ull" {
                     w!(self.write, "null");
@@ -931,7 +931,7 @@ where
 
     /// Check the next char without consuming it
     fn peek_next_char(&mut self) -> Result<u8> {
-        self.input
+        self.read
             .fill_buf()?
             .first()
             .ok_or(Error::BufferEmpty)
@@ -941,7 +941,7 @@ where
     /// Consume the next character from the reader
     fn next_char(&mut self) -> Result<u8> {
         let mut chr = [0_u8];
-        self.input.read_exact(&mut chr)?;
+        self.read.read_exact(&mut chr)?;
         Ok(chr[0])
     }
 
@@ -1104,10 +1104,10 @@ mod tests {
 
     use super::*;
 
-    fn format_to_string(input: &[u8], mode: Mode) -> String {
+    fn format_to_string(read: &[u8], mode: Mode) -> String {
         let mut output = vec![];
         Parser::new(mode)
-            .format_buf(BufReader::new(input), &mut BufWriter::new(&mut output))
+            .format_buf(BufReader::new(read), &mut BufWriter::new(&mut output))
             .unwrap();
         String::from_utf8(output).unwrap()
     }
