@@ -23,9 +23,12 @@ pub fn csv_reader_to_json_writer(
 
     let mut state = ParserState::WaitingForRow { saw_cr: false };
 
-    output
-        .write_all(b"[")
-        .context("Writing initial byte to output")?;
+    if args.wrap {
+        output
+            .write_all(b"[")
+            .context("Writing initial byte to output")?
+    }
+
     loop {
         let buf = input.fill_buf()?;
 
@@ -132,9 +135,11 @@ pub fn csv_reader_to_json_writer(
         }
     }
 
-    output
-        .write_all(b"]")
-        .context("Writing final byte to output")?;
+    if args.wrap {
+        output
+            .write_all(b"]")
+            .context("Writing final byte to output")?;
+    }
 
     Ok(())
 }

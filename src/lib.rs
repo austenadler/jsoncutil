@@ -76,6 +76,8 @@ pub struct CsvArgs {
     pub quote_character: u8,
     // #[clap(short = 'H', long, help = "Skip the header row of the CSV")]
     // pub skip_header: bool,
+    #[clap(short = 'w', long, help = "Wrap output in an array")]
+    pub wrap: bool,
 }
 
 fn parse_single_char(arg: &str) -> Result<u8, &'static str> {
