@@ -36,7 +36,8 @@ struct Cli {
         short = 'o',
         long = "output",
         help = "Output file; will be stdout if no output is specified",
-        conflicts_with = "inplace"
+        conflicts_with = "inplace",
+        global = true
     )]
     output: Option<IoArg>,
 
@@ -44,7 +45,8 @@ struct Cli {
         long = "json",
         short = 'j',
         help = "Output json instead of jsonc",
-        default_value_if("compact", "true", Some("true"))
+        default_value_if("compact", "true", Some("true")),
+        global = true
     )]
     output_json: bool,
 
@@ -54,7 +56,8 @@ struct Cli {
         value_name = "FILE",
         conflicts_with = "output",
         conflicts_with = "output_json",
-        conflicts_with = "inplace"
+        conflicts_with = "inplace",
+        global = true
     )]
     jsoncc_output: Option<IoArg>,
 
@@ -98,7 +101,8 @@ struct FmtArgs {
         short = 'c',
         long = "compact",
         help = "Compact json format",
-        conflicts_with = "output"
+        conflicts_with = "output",
+        global = true
     )]
     compact: bool,
 
@@ -106,7 +110,8 @@ struct FmtArgs {
         short = 'I',
         long = "inplace",
         help = "Replace file contents inplace",
-        requires = "input"
+        requires = "input",
+        global = true
     )]
     inplace: bool,
 
