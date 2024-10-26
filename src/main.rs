@@ -23,7 +23,11 @@ use std::{
 
 #[derive(Parser, Debug)]
 struct Cli {
-    #[clap(help = "Input file, or `-` for stdin", default_value = "-")]
+    #[clap(
+        help = "Input file, or `-` for stdin",
+        default_value = "-",
+        global = true
+    )]
     input: IoArg,
 
     #[command(subcommand)]
@@ -220,7 +224,7 @@ fn main() -> Result<()> {
         Some(Command::Csv(csv_args)) => {
             // The input is CSV, so we hvae to use the csv parser
             format_single_csv(
-                csv_args.input.clone(),
+                cli.input.clone(),
                 cli.jsonc_output(),
                 cli.json_output(),
                 &cli.fmt_args,
