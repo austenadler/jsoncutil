@@ -1,5 +1,8 @@
 use crate::CsvArgs;
+use encoding_rs_io::DecodeReaderBytes;
 use std::io::BufRead;
+use std::io::BufReader;
+use std::io::BufWriter;
 use std::io::Write;
 
 use anyhow::{bail, Context, Result};
@@ -27,10 +30,13 @@ impl Parser {
     }
 
     pub fn parse_buf<R: BufRead, W: Write>(self, reader: R, writer: W) -> Result<()> {
+        // CSVs can have a BOM, so use encoding-rs to decode it
+        let decoded_reader = DecodeReaderBytes::new(reader);
+
         ParserInner {
             first_row: true,
-            reader,
-            writer,
+            reader: BufReader::new(decoded_reader),
+            writer: BufWriter::new(writer),
             state: ParserState::WaitingForRow { saw_cr: false },
             args: self.csv_args,
         }

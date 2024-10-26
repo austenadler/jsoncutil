@@ -9,6 +9,8 @@ atomicwrites = "0.4.3"
 clap = { version = "4.5.16", features = ["derive"] }
 crossbeam-channel = "0.5.13"
 derivative = "2.2.0"
+encoding_rs = "0.8.35"
+encoding_rs_io = "0.1.7"
 interprocess = "2.2.1"
 memchr = "2.7.4"
 notify-debouncer-mini = "0.4.1"
@@ -16,5 +18,5 @@ oxidized-json-checker = "0.3.2"
 # serde_json = { version = "1.0.132", features = ["preserve_order", "arbitrary_precision"] }
 thiserror = "1.0.63"
 
-# [profile.release]
-# debug = 2
+[profile.release]
+debug = 2
