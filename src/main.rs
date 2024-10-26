@@ -2,20 +2,16 @@ mod indentor;
 mod parser;
 
 use anyhow::{bail, Context, Error, Result};
-use atomicwrites::OverwriteBehavior;
-use atomicwrites::{AtomicFile, OverwriteBehavior::AllowOverwrite};
+use atomicwrites::AtomicFile;
 use clap::{Args, Parser, Subcommand};
 use crossbeam_channel::{Receiver, Sender};
 use interprocess::unnamed_pipe;
-use jsoncutil::csv_parser::csv_reader_to_json_writer;
-use jsoncutil::IoArg;
-use jsoncutil::IoArgRef;
 use jsoncutil::Writer;
+use jsoncutil::{csv_parser, IoArg};
 use jsoncutil::{CsvArgs, ATOMIC_FILE_OPTIONS};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use parser::Mode;
-use std::io::{stdout, Write};
-use std::path::Path;
+use std::io::stdout;
 use std::{
     collections::HashSet,
     ffi::OsString,
@@ -248,9 +244,11 @@ fn format_single_csv(
     let csv_args = csv_args.clone();
     let handle = std::thread::spawn(move || -> Result<()> {
         // let br = input_to_reader(&input)?;
-        csv_reader_to_json_writer(csv_args, &mut input.to_reader()?, writer)?;
+        csv_parser::Parser::new(csv_args).parse_buf(&mut input.to_reader()?, writer)?;
         Ok(())
     });
+
+    // panic!("Output: {}", read_to_string(reader).unwrap());
 
     let formatting_result = format_single_file(
         Box::new(BufReader::new(reader)),
