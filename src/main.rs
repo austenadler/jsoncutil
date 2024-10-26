@@ -248,7 +248,7 @@ fn format_single_csv(
         Ok(())
     });
 
-    // panic!("Output: {}", read_to_string(reader).unwrap());
+    // panic!("Output: {}", std::io::read_to_string(reader).unwrap());
 
     let formatting_result = format_single_file(
         Box::new(BufReader::new(reader)),

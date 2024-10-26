@@ -147,6 +147,8 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
                         // Now we wait for the next row
                         self.state = ParserState::WaitingForRow { saw_cr: c == b'\r' };
                     }
+                    // abc
+                    //  ^
                     c => {
                         self.write_escaped_json_char(c)?;
                         self.state = ParserState::InUnquotedField { start: false };
@@ -220,45 +222,51 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
     }
 
     fn start_row(&mut self) -> Result<()> {
-        // eprintln!("start_row");
-        self.writer
-            .write_all(b"[")
-            .context("Writing start row byte to self.writer")
+        self.write(b"[")
     }
 
     fn end_row(&mut self) -> Result<()> {
-        // eprintln!("end_row");
-        self.writer
-            .write_all(b"]")
-            .context("Writing end row byte to self.writer")
+        let ret = self.write(b"]");
+        // We ended at least 1 row, so we are not on the first row anymore
+        // But do this after we try writing ]
+        self.first_row = false;
+        ret
     }
 
     fn start_field(&mut self) -> Result<()> {
-        // eprintln!("start_field");
-        self.writer
-            .write_all(b"\"")
-            .context("Writing start field byte to self.writer")
+        self.write(b"\"")
     }
 
     fn end_field(&mut self) -> Result<()> {
-        // eprintln!("end_field");
-        self.writer
-            .write_all(b"\",")
-            .context("Writing end field byte to self.writer")
+        self.write(b"\",")
     }
 
-    fn write_escaped_json_char(&mut self, c: u8) -> std::io::Result<()> {
+    fn write(&mut self, buf: &[u8]) -> Result<()> {
+        if self.should_print() {
+            self.writer.write_all(buf)?;
+        }
+
+        Ok(())
+    }
+
+    /// Checks if we should be writing to output right now
+    fn should_print(&self) -> bool {
+        // We do not want to write if we are on the first row, but we want to skip headers
+        !(self.first_row && self.args.skip_header)
+    }
+
+    fn write_escaped_json_char(&mut self, c: u8) -> Result<()> {
         // eprintln!("Writing: {:?}", c as char);
         match c {
-            b'"' => self.writer.write_all(b"\\\""),
-            b'\\' => self.writer.write_all(b"\\\\"),
-            b'/' => self.writer.write_all(b"\\/"),
-            0x08 => self.writer.write_all(b"\\b"),
-            0x0c => self.writer.write_all(b"\\f"),
-            b'\n' => self.writer.write_all(b"\\n"),
-            b'\r' => self.writer.write_all(b"\\r"),
-            b'\t' => self.writer.write_all(b"\\t"),
-            c => self.writer.write_all(&[c]),
+            b'"' => self.write(b"\\\""),
+            b'\\' => self.write(b"\\\\"),
+            b'/' => self.write(b"\\/"),
+            0x08 => self.write(b"\\b"),
+            0x0c => self.write(b"\\f"),
+            b'\n' => self.write(b"\\n"),
+            b'\r' => self.write(b"\\r"),
+            b'\t' => self.write(b"\\t"),
+            c => self.write(&[c]),
         }
     }
 }

@@ -90,7 +90,7 @@ pub struct CsvArgs {
     #[clap(short = 'q', long, help = "CSV quote character", default_value = "\"", value_parser = parse_single_char)]
     pub quote_character: u8,
 
-    #[clap(short = 'H', long, help = "Skip the header row of the CSV")]
+    #[clap(short = 'H', long, help = "Exclude the header row of the CSV from the output")]
     pub skip_header: bool,
 
     #[clap(short = 'w', long, help = "Wrap output in an array")]
