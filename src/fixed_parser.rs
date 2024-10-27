@@ -33,7 +33,7 @@ impl ColumnDescInner {
 impl Parser {
     pub fn new(args: FixedArgs) -> Result<Self> {
         Ok(Self {
-            column_descs: to_column_descs_inner(args.column)?,
+            column_descs: dbg!(to_column_descs_inner(args.column)?),
         })
     }
 
@@ -46,7 +46,7 @@ impl Parser {
             state: ParserRowState::default(),
             column_descs: self.column_descs,
         }
-        .parse_buf(decoded_reader, &mut writer)
+        .parse_buf(decoded_reader, writer)
     }
 }
 
@@ -119,7 +119,7 @@ impl Default for ParserRowState {
 }
 
 impl ParserInner {
-    fn parse_buf<R: BufRead, W: Write>(mut self, mut reader: R, writer: &mut W) -> Result<()> {
+    fn parse_buf<R: BufRead, W: Write>(mut self, mut reader: R, mut writer: W) -> Result<()> {
         // // The current position in a current line
         // let mut position_in_record = 0;
 
@@ -131,38 +131,6 @@ impl ParserInner {
             if buf.is_empty() {
                 break;
             }
-
-            // ParserState::WaitingForRow { saw_cr } => match c {
-            //     b'\n' | b'\r' => {
-            //         if saw_cr && c == b'\n' {
-            //             // We saw a CR, but now we see an LF, so the LF is ignored
-            //             reader.consume(1);
-            //         } else {
-            //             // This is empty, so start and then end the row
-            //             self.start_row()?;
-            //             // TODO: Does this csv file have one field or 0 fields?
-            //             // I think 1 because it *is* a line
-            //             self.start_field()?;
-            //             self.end_field()?;
-            //             self.end_row()?;
-            //             reader.consume(1);
-            //         }
-            //         // n += 1;
-            //         continue;
-            //     }
-
-            // let first_char = buf[0];
-            // match first_char {
-            //     b'\n' if self.state == ParserRowState::WaitingFor { saw_cr: true } => {
-            //         reader.consume(1);
-            //         continue;
-            //     }
-            //     b'\n' | b'\r' => {
-            //         self.drain_remaining_empty()?;
-            //         self.state = ParserRowState::WaitingFor { saw_cr: true };
-            //     }
-            //     _ => {}
-            // }
 
             if buf[0] == b'\n' && self.state == (ParserRowState::Waiting { saw_cr: true }) {
                 // We just saw a \r, and now we see a \n
@@ -206,7 +174,7 @@ impl ParserInner {
                         col: 0,
                         already_read_bytes: 0,
                     };
-                    self.start_row(&mut *writer)?;
+                    self.start_row(&mut writer)?;
                     (0, 0)
                 }
                 ParserRowState::Within {
@@ -224,7 +192,7 @@ impl ParserInner {
             // Read one column's worth of data to writer
             if already_read_bytes == 0 {
                 // This is the start of this column
-                self.start_field(&mut *writer)?;
+                self.start_field(&mut writer)?;
             }
 
             let column_len = self.column_descs[col].len();
@@ -235,11 +203,11 @@ impl ParserInner {
 
             if already_read_bytes == column_len {
                 // We are done with this column
-                self.end_field(&mut *writer)?;
+                self.end_field(&mut writer)?;
 
                 self.state = if dbg!(self.column_descs.len()) <= dbg!(col + 1) {
                     // This was the last column in the row, too. End the row
-                    self.end_row(&mut *writer)?;
+                    self.end_row(&mut writer)?;
                     ParserRowState::DoneReading
                 } else {
                     // We have another column in this row
@@ -277,11 +245,11 @@ impl ParserInner {
         }
     }
 
-    fn start_row(&mut self, writer: impl Write) -> Result<()> {
+    fn start_row(&mut self, writer: &mut impl Write) -> Result<()> {
         self.write(writer, b"[")
     }
 
-    fn end_row(&mut self, writer: impl Write) -> Result<()> {
+    fn end_row(&mut self, writer: &mut impl Write) -> Result<()> {
         let ret = self.write(writer, b"]");
         // We ended at least 1 row, so we are not on the first row anymore
         // But do this after we try writing ]
@@ -289,15 +257,15 @@ impl ParserInner {
         ret
     }
 
-    fn start_field(&mut self, writer: impl Write) -> Result<()> {
+    fn start_field(&mut self, writer: &mut impl Write) -> Result<()> {
         self.write(writer, b"\"")
     }
 
-    fn end_field(&mut self, writer: impl Write) -> Result<()> {
+    fn end_field(&mut self, writer: &mut impl Write) -> Result<()> {
         self.write(writer, b"\",")
     }
 
-    fn write(&mut self, mut writer: impl Write, buf: &[u8]) -> Result<()> {
+    fn write(&mut self, writer: &mut impl Write, buf: &[u8]) -> Result<()> {
         if self.should_print() {
             writer.write_all(buf)?;
         }
@@ -312,7 +280,7 @@ impl ParserInner {
         true
     }
 
-    fn write_escaped_json_char(&mut self, writer: impl Write, c: u8) -> Result<()> {
+    fn write_escaped_json_char(&mut self, writer: &mut impl Write, c: u8) -> Result<()> {
         // eprintln!("Writing: {:?}", c as char);
         match c {
             b'"' => self.write(writer, b"\\\""),
