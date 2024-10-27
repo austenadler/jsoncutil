@@ -152,7 +152,9 @@ impl Cli {
                 self.output
                     .as_ref()
                     .map(IoArg::to_writer)
-                    .unwrap_or_else(|| Writer::BufferedWriter(Box::new(stdout().lock()))),
+                    .unwrap_or_else(|| {
+                        Writer::BufferedWriter(Box::new(BufWriter::new(stdout().lock())))
+                    }),
             ),
         }
     }
@@ -181,7 +183,9 @@ impl Cli {
                 self.output
                     .as_ref()
                     .map(IoArg::to_writer)
-                    .unwrap_or_else(|| Writer::BufferedWriter(Box::new(stdout().lock()))),
+                    .unwrap_or_else(|| {
+                        Writer::BufferedWriter(Box::new(BufWriter::new(stdout().lock())))
+                    }),
             ),
             _ => None,
         }
