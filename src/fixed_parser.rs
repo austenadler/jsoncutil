@@ -106,6 +106,7 @@ enum ParserRowState {
     },
     Within {
         col: usize,
+        /// The number of bytes we read in this column, or 0
         already_read_bytes: usize,
     },
     /// We are done reading the row, but there might be extra data at the end
@@ -126,7 +127,7 @@ impl ParserInner {
         loop {
             let mut buf = reader.fill_buf()?;
             eprintln!("{:?}", self.state);
-            eprintln!("Got buf: {buf:?}");
+            eprintln!("Got buf: {:?}", String::from_utf8_lossy(buf));
 
             if buf.is_empty() {
                 break;
@@ -141,21 +142,10 @@ impl ParserInner {
             } else if buf[0] == b'\n' || buf[0] == b'\r' {
                 // We saw a newline
                 // Make sure any columns that we were expecting are output as empty
-                self.drain_remaining_empty()?;
+                self.drain_remaining_empty(&mut writer)?;
                 self.state = ParserRowState::Waiting {
                     saw_cr: buf[0] == b'\r',
                 };
-                continue;
-            }
-
-            if buf[0] == b'\r' {
-                self.drain_remaining_empty()?;
-                self.state = ParserRowState::Waiting { saw_cr: true };
-                reader.consume(1);
-                continue;
-            } else if buf[0] == b'\n' {
-                self.drain_remaining_empty()?;
-                self.state = ParserRowState::Waiting { saw_cr: false };
                 reader.consume(1);
                 continue;
             }
@@ -168,7 +158,7 @@ impl ParserInner {
 
             // Buf now contains a (maybe complete) row
             // If we were waiting for a row, we no longer are waiting
-            let (col, already_read_bytes) = match self.state {
+            let (col, mut already_read_bytes) = match self.state {
                 ParserRowState::Waiting { saw_cr: _saw_cr } => {
                     self.state = ParserRowState::Within {
                         col: 0,
@@ -196,16 +186,18 @@ impl ParserInner {
             }
 
             let column_len = self.column_descs[col].len();
-            let available_len = std::cmp::min(column_len, buf.len());
+            let wanted_len = column_len - already_read_bytes;
+            let available_len = std::cmp::min(wanted_len, buf.len());
             // self.write(&buf[0..column_len])?;
-            writer.write_all(&buf[0..available_len])?;
+            self.write(&mut writer, &buf[0..available_len])?;
             reader.consume(available_len);
+            already_read_bytes += available_len;
 
             if already_read_bytes == column_len {
                 // We are done with this column
                 self.end_field(&mut writer)?;
 
-                self.state = if dbg!(self.column_descs.len()) <= dbg!(col + 1) {
+                self.state = if dbg!(self.column_descs.len()) <= col + 1 {
                     // This was the last column in the row, too. End the row
                     self.end_row(&mut writer)?;
                     ParserRowState::DoneReading
@@ -222,7 +214,7 @@ impl ParserInner {
 
                 self.state = ParserRowState::Within {
                     col,
-                    already_read_bytes: 0,
+                    already_read_bytes,
                 }
             }
         }
@@ -231,18 +223,28 @@ impl ParserInner {
     }
 
     /// If we are in the middle of writing a row out, we know we ended prematurely, and the rest of the columns are empty
-    fn drain_remaining_empty(&mut self) -> Result<()> {
+    fn drain_remaining_empty(&mut self, writer: &mut impl Write) -> Result<()> {
         eprintln!("Draining: {:?}", self.state);
         match self.state {
-            ParserRowState::Waiting { saw_cr } => return Ok(()),
+            ParserRowState::Waiting { .. } => {}
             ParserRowState::Within {
                 col,
-                already_read_bytes,
+                already_read_bytes: _,
             } => {
-                todo![]
+                self.end_field(writer)?;
+
+                // For every column after this one, output as empty
+                for _ in (col + 1)..self.column_descs.len() {
+                    self.start_field(writer)?;
+                    self.end_field(writer)?;
+                }
+
+                self.end_row(writer)?;
             }
-            ParserRowState::DoneReading => todo!(),
+            ParserRowState::DoneReading => {}
         }
+
+        Ok(())
     }
 
     fn start_row(&mut self, writer: &mut impl Write) -> Result<()> {
@@ -267,6 +269,7 @@ impl ParserInner {
 
     fn write(&mut self, writer: &mut impl Write, buf: &[u8]) -> Result<()> {
         if self.should_print() {
+            eprintln!("> Writing: {:?}", String::from_utf8_lossy(buf));
             writer.write_all(buf)?;
         }
 
