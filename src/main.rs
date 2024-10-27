@@ -6,9 +6,9 @@ use atomicwrites::AtomicFile;
 use clap::{Args, Parser, Subcommand};
 use crossbeam_channel::{Receiver, Sender};
 use interprocess::unnamed_pipe;
-use jsoncutil::Writer;
-use jsoncutil::{csv_parser, IoArg};
+use jsoncutil::{csv_parser, fixed_parser, IoArg};
 use jsoncutil::{CsvArgs, ATOMIC_FILE_OPTIONS};
+use jsoncutil::{FixedArgs, Writer};
 use notify_debouncer_mini::{new_debouncer, notify::*, DebounceEventResult};
 use parser::Mode;
 use std::io::stdout;
@@ -85,6 +85,9 @@ enum Command {
 
     #[clap(about = "Use a CSV file for the input instead of JSONC")]
     Csv(CsvArgs),
+
+    #[clap(about = "Use a fixed-width file for the input instead of JSONC")]
+    Fixed(FixedArgs),
 }
 
 #[derive(Args, Debug)]
@@ -235,6 +238,56 @@ fn main() -> Result<()> {
                 csv_args,
             )?;
         }
+        Some(Command::Fixed(fixed_args)) => {
+            // The input is CSV, so we hvae to use the csv parser
+            format_single_fixed(
+                cli.input.clone(),
+                cli.jsonc_output(),
+                cli.json_output(),
+                &cli.fmt_args,
+                fixed_args,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+fn format_single_fixed(
+    input: IoArg,
+    jsonc_output: Option<Writer>,
+    json_output: Option<Writer>,
+    fmt_args: &FmtArgs,
+    fixed_args: &FixedArgs,
+) -> Result<()> {
+    let (writer, reader) = unnamed_pipe::pipe()?;
+
+    let parser = fixed_parser::Parser::new(fixed_args.clone())?;
+    let handle = std::thread::spawn(move || -> Result<()> {
+        // let br = input_to_reader(&input)?;
+        parser.parse_buf(&mut input.to_reader()?, writer)?;
+        Ok(())
+    });
+
+    // panic!("Output: {}", std::io::read_to_string(reader).unwrap());
+
+    let formatting_result = format_single_file(
+        Box::new(BufReader::new(reader)),
+        jsonc_output,
+        json_output,
+        fmt_args,
+    )
+    .context("Could not format csv output");
+
+    let parsing_result = handle
+        .join()
+        .map_err(|e| anyhow::anyhow!("Could not join thread: {e:?}"))?
+        .context("Could not parse as CSV");
+
+    if parsing_result.is_err() || formatting_result.is_err() {
+        eprintln!("Parsing as CSV: {parsing_result:?}");
+        eprintln!("Formatting parsed CSV: {formatting_result:?}");
+        bail!("Could not format CSV");
     }
 
     Ok(())
@@ -250,9 +303,10 @@ fn format_single_csv(
     let (writer, reader) = unnamed_pipe::pipe()?;
 
     let csv_args = csv_args.clone();
+    let parser = csv_parser::Parser::new(csv_args);
     let handle = std::thread::spawn(move || -> Result<()> {
         // let br = input_to_reader(&input)?;
-        csv_parser::Parser::new(csv_args).parse_buf(&mut input.to_reader()?, writer)?;
+        parser.parse_buf(&mut input.to_reader()?, writer)?;
         Ok(())
     });
 

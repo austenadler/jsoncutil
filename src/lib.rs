@@ -5,6 +5,7 @@ use atomicwrites::{
 use clap::Args;
 use std::{
     convert::Infallible,
+    error::Error,
     fs::File,
     io::{stdin, stdout, BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -14,8 +15,10 @@ use std::{
 use anyhow::{Context, Result};
 
 pub mod csv_parser;
+pub mod fixed_parser;
 pub mod indentor;
 pub mod parser;
+
 #[derive(Debug)]
 pub enum IoArgRef<'a> {
     Stdio,
@@ -96,6 +99,119 @@ pub struct CsvArgs {
 
     #[clap(short = 'w', long, help = "Wrap output in an array")]
     pub wrap: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct FixedArgs {
+    /// A list of columns in the fixed width file
+    #[clap(short = 'C', long, value_parser = FixedColumnDesc::from_str )]
+    pub column: Vec<FixedColumnDesc>,
+}
+
+/// A description of a fixed column, including a start, length, and optional name
+///
+/// The start of a column could be an absolute position, or an offset from the previous column
+///
+/// ```rust
+/// use jsoncutil::FixedColumnDesc;
+/// use jsoncutil::FixedFieldStart;
+/// use std::str::FromStr;
+///
+/// assert_eq!(FixedColumnDesc::from_str("10").unwrap(), FixedColumnDesc {
+///     start: FixedFieldStart::Offset(0),
+///     length: 10,
+///     name: None,
+/// });
+/// assert_eq!(FixedColumnDesc::from_str("10;Name").unwrap(), FixedColumnDesc {
+///     start: FixedFieldStart::Offset(0),
+///     length: 10,
+///     name: Some(String::from("Name")),
+/// });
+/// assert_eq!(FixedColumnDesc::from_str("5,10;Name;with;semicolons").unwrap(), FixedColumnDesc {
+///     start: FixedFieldStart::Position(5),
+///     length: 10,
+///     name: Some(String::from("Name;with;semicolons")),
+/// });
+/// assert_eq!(FixedColumnDesc::from_str("+5,10;Name").unwrap(), FixedColumnDesc {
+///     start: FixedFieldStart::Offset(5),
+///     length: 10,
+///     name: Some(String::from("Name")),
+/// });
+/// ```
+#[derive(Args, Debug, Clone, PartialEq, Eq)]
+pub struct FixedColumnDesc {
+    #[clap(value_parser = FixedFieldStart::from_str)]
+    pub start: FixedFieldStart,
+    pub length: usize,
+    pub name: Option<String>,
+}
+
+impl FromStr for FixedColumnDesc {
+    type Err = Box<dyn Error + Send + Sync>;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        // "2,3;Name" => Some("Name")
+        // "2,3;" or "2,3" or "2" => None
+        let (rest, name) = s
+            .split_once(";")
+            .map(|(rest, name)| {
+                (
+                    rest,
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(name.to_string())
+                    },
+                )
+            })
+            .unwrap_or((s, None));
+
+        // Length is required, but start is optional
+        let (start, length) = rest
+            .split_once(",")
+            .map(|(a, b)| (a.trim(), b.trim()))
+            .unwrap_or(("", rest.trim()));
+
+        let start = if start.is_empty() {
+            FixedFieldStart::Offset(0)
+        } else {
+            FixedFieldStart::from_str(start)?
+        };
+
+        let length = length
+            .parse()
+            .map_err(|e| format!("Could not parse length: {e:?}"))?;
+
+        Ok(FixedColumnDesc {
+            start,
+            length,
+            name,
+        })
+    }
+}
+
+/// A column description for a fixed-width column
+///
+/// * "123" => FixedFieldStart::Position(123)
+/// * "+1" => FixedFieldStart::Offset(1)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FixedFieldStart {
+    Position(usize),
+    Offset(usize),
+}
+
+impl FromStr for FixedFieldStart {
+    type Err = Box<dyn Error + Send + Sync>;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s.is_empty() {
+            Ok(Self::Offset(0))
+        } else if s.len() >= 2 && s.starts_with('+') {
+            Ok(s[1..].parse::<usize>().map(Self::Offset)?)
+        } else {
+            Ok(s.parse::<usize>().map(Self::Position)?)
+        }
+    }
 }
 
 fn parse_single_char(arg: &str) -> Result<u8, &'static str> {
