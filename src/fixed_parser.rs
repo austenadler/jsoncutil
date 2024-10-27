@@ -37,18 +37,16 @@ impl Parser {
         })
     }
 
-    pub fn parse_buf<R: BufRead, W: Write>(self, reader: R, writer: W) -> Result<()> {
+    pub fn parse_buf<R: BufRead, W: Write>(self, reader: R, mut writer: W) -> Result<()> {
         // CSVs can have a BOM, so use encoding-rs to decode it
-        let decoded_reader = DecodeReaderBytes::new(reader);
+        let decoded_reader = BufReader::new(DecodeReaderBytes::new(reader));
 
         ParserInner {
             first_row: true,
-            reader: BufReader::new(decoded_reader),
-            writer: BufWriter::new(writer),
             state: ParserRowState::default(),
             column_descs: self.column_descs,
         }
-        .parse_buf()
+        .parse_buf(decoded_reader, &mut writer)
     }
 }
 
@@ -95,17 +93,15 @@ fn to_column_descs_inner(columns: Vec<FixedColumnDesc>) -> Result<Vec<ColumnDesc
     Ok(ret)
 }
 
-struct ParserInner<R: BufRead, W: Write> {
+struct ParserInner {
     first_row: bool,
-    reader: R,
-    writer: W,
     state: ParserRowState,
     column_descs: Vec<ColumnDescInner>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum ParserRowState {
-    WaitingFor {
+    Waiting {
         saw_cr: bool,
     },
     Within {
@@ -118,17 +114,17 @@ enum ParserRowState {
 
 impl Default for ParserRowState {
     fn default() -> Self {
-        Self::WaitingFor { saw_cr: false }
+        Self::Waiting { saw_cr: false }
     }
 }
 
-impl<R: BufRead, W: Write> ParserInner<R, W> {
-    fn parse_buf(mut self) -> Result<()> {
+impl ParserInner {
+    fn parse_buf<R: BufRead, W: Write>(mut self, mut reader: R, writer: &mut W) -> Result<()> {
         // // The current position in a current line
         // let mut position_in_record = 0;
 
         loop {
-            let mut buf = self.reader.fill_buf()?;
+            let mut buf = reader.fill_buf()?;
             eprintln!("{:?}", self.state);
             eprintln!("Got buf: {buf:?}");
 
@@ -140,7 +136,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             //     b'\n' | b'\r' => {
             //         if saw_cr && c == b'\n' {
             //             // We saw a CR, but now we see an LF, so the LF is ignored
-            //             self.reader.consume(1);
+            //             reader.consume(1);
             //         } else {
             //             // This is empty, so start and then end the row
             //             self.start_row()?;
@@ -149,7 +145,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             //             self.start_field()?;
             //             self.end_field()?;
             //             self.end_row()?;
-            //             self.reader.consume(1);
+            //             reader.consume(1);
             //         }
             //         // n += 1;
             //         continue;
@@ -158,7 +154,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             // let first_char = buf[0];
             // match first_char {
             //     b'\n' if self.state == ParserRowState::WaitingFor { saw_cr: true } => {
-            //         self.reader.consume(1);
+            //         reader.consume(1);
             //         continue;
             //     }
             //     b'\n' | b'\r' => {
@@ -168,13 +164,17 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             //     _ => {}
             // }
 
-            if buf[0] == b'\n' && self.state == (ParserRowState::WaitingFor { saw_cr: true }) {
-                self.reader.consume(1);
-                self.state = ParserRowState::WaitingFor { saw_cr: false };
+            if buf[0] == b'\n' && self.state == (ParserRowState::Waiting { saw_cr: true }) {
+                // We just saw a \r, and now we see a \n
+                // Ignore it and move on
+                reader.consume(1);
+                self.state = ParserRowState::Waiting { saw_cr: false };
                 continue;
             } else if buf[0] == b'\n' || buf[0] == b'\r' {
+                // We saw a newline
+                // Make sure any columns that we were expecting are output as empty
                 self.drain_remaining_empty()?;
-                self.state = ParserRowState::WaitingFor {
+                self.state = ParserRowState::Waiting {
                     saw_cr: buf[0] == b'\r',
                 };
                 continue;
@@ -182,13 +182,13 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
 
             if buf[0] == b'\r' {
                 self.drain_remaining_empty()?;
-                self.state = ParserRowState::WaitingFor { saw_cr: true };
-                self.reader.consume(1);
+                self.state = ParserRowState::Waiting { saw_cr: true };
+                reader.consume(1);
                 continue;
             } else if buf[0] == b'\n' {
                 self.drain_remaining_empty()?;
-                self.state = ParserRowState::WaitingFor { saw_cr: false };
-                self.reader.consume(1);
+                self.state = ParserRowState::Waiting { saw_cr: false };
+                reader.consume(1);
                 continue;
             }
 
@@ -201,12 +201,12 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             // Buf now contains a (maybe complete) row
             // If we were waiting for a row, we no longer are waiting
             let (col, already_read_bytes) = match self.state {
-                ParserRowState::WaitingFor { saw_cr: _saw_cr } => {
+                ParserRowState::Waiting { saw_cr: _saw_cr } => {
                     self.state = ParserRowState::Within {
                         col: 0,
                         already_read_bytes: 0,
                     };
-                    self.writer.write_all(b"[")?;
+                    self.start_row(&mut *writer)?;
                     (0, 0)
                 }
                 ParserRowState::Within {
@@ -216,7 +216,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
                 ParserRowState::DoneReading => {
                     // We are done witih this row already. Consume the rest of buf, since we don't care about it
                     let buf_len = buf.len();
-                    self.reader.consume(buf_len);
+                    reader.consume(buf_len);
                     continue;
                 }
             };
@@ -224,24 +224,22 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             // Read one column's worth of data to writer
             if already_read_bytes == 0 {
                 // This is the start of this column
-                self.writer.write_all(b"\"")?;
-                // I don't know why this doesn't work
-                // self.start_field()?;
+                self.start_field(&mut *writer)?;
             }
 
             let column_len = self.column_descs[col].len();
             let available_len = std::cmp::min(column_len, buf.len());
             // self.write(&buf[0..column_len])?;
-            self.writer.write_all(&buf[0..available_len])?;
-            self.reader.consume(available_len);
+            writer.write_all(&buf[0..available_len])?;
+            reader.consume(available_len);
 
             if already_read_bytes == column_len {
                 // We are done with this column
-                self.end_field()?;
+                self.end_field(&mut *writer)?;
 
                 self.state = if dbg!(self.column_descs.len()) <= dbg!(col + 1) {
                     // This was the last column in the row, too. End the row
-                    self.end_row()?;
+                    self.end_row(&mut *writer)?;
                     ParserRowState::DoneReading
                 } else {
                     // We have another column in this row
@@ -268,7 +266,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
     fn drain_remaining_empty(&mut self) -> Result<()> {
         eprintln!("Draining: {:?}", self.state);
         match self.state {
-            ParserRowState::WaitingFor { saw_cr } => return Ok(()),
+            ParserRowState::Waiting { saw_cr } => return Ok(()),
             ParserRowState::Within {
                 col,
                 already_read_bytes,
@@ -279,29 +277,29 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
         }
     }
 
-    fn start_row(&mut self) -> Result<()> {
-        self.write(b"[")
+    fn start_row(&mut self, writer: impl Write) -> Result<()> {
+        self.write(writer, b"[")
     }
 
-    fn end_row(&mut self) -> Result<()> {
-        let ret = self.write(b"]");
+    fn end_row(&mut self, writer: impl Write) -> Result<()> {
+        let ret = self.write(writer, b"]");
         // We ended at least 1 row, so we are not on the first row anymore
         // But do this after we try writing ]
         self.first_row = false;
         ret
     }
 
-    fn start_field(&mut self) -> Result<()> {
-        self.write(b"\"")
+    fn start_field(&mut self, writer: impl Write) -> Result<()> {
+        self.write(writer, b"\"")
     }
 
-    fn end_field(&mut self) -> Result<()> {
-        self.write(b"\",")
+    fn end_field(&mut self, writer: impl Write) -> Result<()> {
+        self.write(writer, b"\",")
     }
 
-    fn write(&mut self, buf: &[u8]) -> Result<()> {
+    fn write(&mut self, mut writer: impl Write, buf: &[u8]) -> Result<()> {
         if self.should_print() {
-            self.writer.write_all(buf)?;
+            writer.write_all(buf)?;
         }
 
         Ok(())
@@ -314,18 +312,18 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
         true
     }
 
-    fn write_escaped_json_char(&mut self, c: u8) -> Result<()> {
+    fn write_escaped_json_char(&mut self, writer: impl Write, c: u8) -> Result<()> {
         // eprintln!("Writing: {:?}", c as char);
         match c {
-            b'"' => self.write(b"\\\""),
-            b'\\' => self.write(b"\\\\"),
-            b'/' => self.write(b"\\/"),
-            0x08 => self.write(b"\\b"),
-            0x0c => self.write(b"\\f"),
-            b'\n' => self.write(b"\\n"),
-            b'\r' => self.write(b"\\r"),
-            b'\t' => self.write(b"\\t"),
-            c => self.write(&[c]),
+            b'"' => self.write(writer, b"\\\""),
+            b'\\' => self.write(writer, b"\\\\"),
+            b'/' => self.write(writer, b"\\/"),
+            0x08 => self.write(writer, b"\\b"),
+            0x0c => self.write(writer, b"\\f"),
+            b'\n' => self.write(writer, b"\\n"),
+            b'\r' => self.write(writer, b"\\r"),
+            b'\t' => self.write(writer, b"\\t"),
+            c => self.write(writer, &[c]),
         }
     }
 
