@@ -90,7 +90,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
                     }
                     // a,b\n,
                     //      ^
-                    c if c == self.args.separator => {
+                    c if c == self.args.field_separator => {
                         self.start_row()?;
                         // Output an empty string for this field, but also start the next field
                         self.start_field()?;
@@ -123,7 +123,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
                 ParserState::InUnquotedField { start } => match c {
                     // ab,
                     //   ^
-                    c if c == self.args.separator => {
+                    c if c == self.args.field_separator => {
                         self.end_field()?;
                         self.start_field()?;
                         self.state = ParserState::InUnquotedField { start: true };
@@ -185,7 +185,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
                     }
                     // "abc""def",ghi
                     //           ^
-                    c if c == self.args.separator => {
+                    c if c == self.args.field_separator => {
                         self.end_field()?;
                         self.start_field()?;
                         self.state = ParserState::InUnquotedField { start: true };

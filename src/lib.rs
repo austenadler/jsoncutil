@@ -81,16 +81,17 @@ impl IoArg {
 
 #[derive(Args, Debug, Clone)]
 pub struct CsvArgs {
-    #[clap(help = "CSV Input file, or `-` for stdin", default_value = "-")]
-    pub input: IoArg,
-
-    #[clap(short = 's', long, help = "CSV record separator", default_value = ",", value_parser = parse_single_char)]
-    pub separator: u8,
-
-    #[clap(short = 'q', long, help = "CSV quote character", default_value = "\"", value_parser = parse_single_char)]
+    #[clap(long, help = "CSV quote character", default_value = "\"", value_parser = parse_single_char)]
     pub quote_character: u8,
 
-    #[clap(short = 'H', long, help = "Exclude the header row of the CSV from the output")]
+    #[clap(long, help = "CSV field separator", default_value = ",", value_parser = parse_single_char)]
+    pub field_separator: u8,
+
+    #[clap(
+        short = 'H',
+        long,
+        help = "Exclude the header row of the CSV from the output"
+    )]
     pub skip_header: bool,
 
     #[clap(short = 'w', long, help = "Wrap output in an array")]
