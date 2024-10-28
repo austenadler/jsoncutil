@@ -10,9 +10,7 @@ use strum::{EnumIter, IntoEnumIterator};
 
 #[test]
 fn test_csv() {
-    for newline in &[
-        "\n", "\r\n", //, "\r"
-    ] {
+    for newline in &["\n", "\r\n", "\r"] {
         for rec1 in RecordValue::iter() {
             for rec2 in RecordValue::iter() {
                 for rec3 in RecordValue::iter() {
