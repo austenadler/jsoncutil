@@ -2,11 +2,10 @@ use encoding_rs_io::DecodeReaderBytes;
 use memchr::memchr2;
 use std::io::BufRead;
 use std::io::BufReader;
-use std::io::BufWriter;
 use std::io::Write;
 use std::ops::Range;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
 use crate::FixedArgs;
 use crate::FixedColumnDesc;
@@ -62,7 +61,7 @@ impl Parser {
         })
     }
 
-    pub fn parse_buf<R: BufRead, W: Write>(self, reader: R, mut writer: W) -> Result<()> {
+    pub fn parse_buf<R: BufRead, W: Write>(self, reader: R, writer: W) -> Result<()> {
         // CSVs can have a BOM, so use encoding-rs to decode it
         let decoded_reader = BufReader::new(DecodeReaderBytes::new(reader));
 
@@ -386,10 +385,6 @@ impl ParserInner {
         // We do not want to write if we are on the first row, but we want to skip headers
         // !(self.first_row && self.args.skip_header)
         true
-    }
-
-    fn handle_row(&self, buf: &[u8]) -> Result<()> {
-        todo!()
     }
 }
 

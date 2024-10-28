@@ -103,9 +103,9 @@ pub enum Error {
     /// An IO error occured when reading or writing
     #[error("IO Error: {0}")]
     Io(#[from] std::io::Error),
-    /// The stack state was expected to not be empty
-    #[error("State stack was unexpectedly empty")]
-    EmptyStateStack,
+    // /// The stack state was expected to not be empty
+    // #[error("State stack was unexpectedly empty")]
+    // EmptyStateStack,
 }
 
 impl Error {
