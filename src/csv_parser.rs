@@ -91,7 +91,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             }
 
             let c = buf[0];
-            //     eprintln!("[{:?} => {:?}]", self.state, c as char);
+            // eprintln!("[{:?} => {:?}]", self.state, c as char);
             match self.state {
                 ParserState::WaitingForRow { saw_cr } => match c {
                     b'\n' | b'\r' => {
@@ -232,11 +232,15 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
         // If we were in a field, end it if possible
         match self.state {
             ParserState::WaitingForRow { saw_cr: _ } => {}
-            ParserState::InUnquotedField { start: _ } => {
+            ParserState::InUnquotedField { start: _ }
+                // This was an empty field that now needs to be closed
+                |ParserState::InQuotedField { maybe_ending: true }=> {
                 self.end_field()?;
                 self.end_row()?;
             }
-            ParserState::InQuotedField { maybe_ending: _ } => {
+            ParserState::InQuotedField {
+                maybe_ending: false,
+            } => {
                 bail!("Quoted field did not have closing quote")
             }
         }
