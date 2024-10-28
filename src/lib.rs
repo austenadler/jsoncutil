@@ -104,8 +104,12 @@ pub struct CsvArgs {
 #[derive(Args, Debug, Clone)]
 pub struct FixedArgs {
     /// A list of columns in the fixed width file
-    #[clap(short = 'C', long, value_parser = FixedColumnDesc::from_str )]
+    #[clap(short = 'C', long, value_parser = FixedColumnDesc::from_str)]
     pub column: Vec<FixedColumnDesc>,
+
+    /// Output in object format instead of array format
+    #[clap(short = 'O', long = "object")]
+    pub object_format: bool,
 }
 
 /// A description of a fixed column, including a start, length, and optional name

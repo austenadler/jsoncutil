@@ -15,6 +15,7 @@ use crate::FixedFieldStart;
 pub struct Parser {
     // pub args: FixedArgs,
     column_descs: Vec<ColumnDescInner>,
+    object_format_names: Option<Vec<String>>,
 }
 
 /// A description for a column, in range form
@@ -32,8 +33,32 @@ impl ColumnDescInner {
 
 impl Parser {
     pub fn new(args: FixedArgs) -> Result<Self> {
+        // Optional containing array of same length as column
+        let object_format_names = args.object_format.then(|| {
+            args.column
+                .iter()
+                .enumerate()
+                .map(|(idx, a)| {
+                    let mut ret = Vec::new();
+                    json::JsonValue::String(
+                        a.name
+                            .as_deref()
+                            .map(String::from)
+                            .unwrap_or_else(|| format!("Column {}", idx + 1)),
+                    )
+                    .write(&mut ret)
+                    .expect("Could not serialize argument name as json");
+                    let ret: String = String::from_utf8(ret)
+                        .expect("Internal error: json-encoded string is no longer utf8");
+
+                    ret
+                })
+                .collect()
+        });
+
         Ok(Self {
             column_descs: to_column_descs_inner(args.column)?,
+            object_format_names,
         })
     }
 
@@ -47,6 +72,7 @@ impl Parser {
             first_row: true,
             state,
             column_descs: self.column_descs,
+            object_format_names: self.object_format_names,
         }
         .parse_buf(decoded_reader, writer)
     }
@@ -101,6 +127,8 @@ struct ParserInner {
     first_row: bool,
     state: ParserRowState,
     column_descs: Vec<ColumnDescInner>,
+    /// If `-O` is specified, then output in object format
+    object_format_names: Option<Vec<String>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -225,7 +253,7 @@ impl ParserInner {
             // Read one column's worth of data to writer
             if already_read_bytes == 0 {
                 // This is the start of this column
-                self.start_field(&mut writer)?;
+                self.start_field(&mut writer, col)?;
             }
 
             // The width of this column
@@ -278,8 +306,8 @@ impl ParserInner {
                 self.start_row(writer)?;
 
                 // For every column after this one, output as empty
-                for _ in 0..self.column_descs.len() {
-                    self.start_field(writer)?;
+                for col in 0..self.column_descs.len() {
+                    self.start_field(writer, col)?;
                     self.end_field(writer)?;
                 }
 
@@ -293,13 +321,13 @@ impl ParserInner {
                 if already_read_bytes == 0 && self.column_descs[col].range.end != already_read_bytes
                 {
                     // We didn't finish reading this column
-                    self.start_field(writer)?;
+                    self.start_field(writer, col)?;
                 }
                 self.end_field(writer)?;
 
                 // For every column after this one, output as empty
-                for _ in (col + 1)..self.column_descs.len() {
-                    self.start_field(writer)?;
+                for col in (col + 1)..self.column_descs.len() {
+                    self.start_field(writer, col)?;
                     self.end_field(writer)?;
                 }
 
@@ -312,19 +340,28 @@ impl ParserInner {
     }
 
     fn start_row(&mut self, writer: &mut impl Write) -> Result<()> {
-        self.write(writer, b"[")
+        self.write(writer, if self.use_object_format() { b"{" } else { b"[" })
     }
 
     fn end_row(&mut self, writer: &mut impl Write) -> Result<()> {
-        let ret = self.write(writer, b"]");
+        let ret = self.write(writer, if self.use_object_format() { b"}" } else { b"]" });
         // We ended at least 1 row, so we are not on the first row anymore
         // But do this after we try writing ]
         self.first_row = false;
         ret
     }
 
-    fn start_field(&mut self, writer: &mut impl Write) -> Result<()> {
-        self.write(writer, b"\"")
+    fn start_field(&mut self, writer: &mut impl Write, col: usize) -> Result<()> {
+        if let Some(ref object_format_names) = self.object_format_names {
+            // They want object format
+            // We do not need to add quotes because they are already quoted
+            writer.write_all(object_format_names[col].as_bytes())?;
+            self.write(writer, b":\"")?;
+            Ok(())
+        } else {
+            // They want array format
+            self.write(writer, b"\"")
+        }
     }
 
     fn end_field(&mut self, writer: &mut impl Write) -> Result<()> {
@@ -340,26 +377,15 @@ impl ParserInner {
         Ok(())
     }
 
+    fn use_object_format(&self) -> bool {
+        self.object_format_names.is_some()
+    }
+
     /// Checks if we should be writing to output right now
     fn should_print(&self) -> bool {
         // We do not want to write if we are on the first row, but we want to skip headers
         // !(self.first_row && self.args.skip_header)
         true
-    }
-
-    fn write_escaped_json_char(&mut self, writer: &mut impl Write, c: u8) -> Result<()> {
-        // eprintln!("Writing: {:?}", c as char);
-        match c {
-            b'"' => self.write(writer, b"\\\""),
-            b'\\' => self.write(writer, b"\\\\"),
-            b'/' => self.write(writer, b"\\/"),
-            0x08 => self.write(writer, b"\\b"),
-            0x0c => self.write(writer, b"\\f"),
-            b'\n' => self.write(writer, b"\\n"),
-            b'\r' => self.write(writer, b"\\r"),
-            b'\t' => self.write(writer, b"\\t"),
-            c => self.write(writer, &[c]),
-        }
     }
 
     fn handle_row(&self, buf: &[u8]) -> Result<()> {
