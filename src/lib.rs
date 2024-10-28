@@ -122,17 +122,17 @@ pub struct FixedArgs {
 ///     length: 10,
 ///     name: None,
 /// });
-/// assert_eq!(FixedColumnDesc::from_str("10;Name").unwrap(), FixedColumnDesc {
+/// assert_eq!(FixedColumnDesc::from_str("10-Name").unwrap(), FixedColumnDesc {
 ///     start: FixedFieldStart::Offset(0),
 ///     length: 10,
 ///     name: Some(String::from("Name")),
 /// });
-/// assert_eq!(FixedColumnDesc::from_str("5,10;Name;with;semicolons").unwrap(), FixedColumnDesc {
+/// assert_eq!(FixedColumnDesc::from_str("5,10-Name-with-dashes").unwrap(), FixedColumnDesc {
 ///     start: FixedFieldStart::Position(5),
 ///     length: 10,
-///     name: Some(String::from("Name;with;semicolons")),
+///     name: Some(String::from("Name-with-dashes")),
 /// });
-/// assert_eq!(FixedColumnDesc::from_str("+5,10;Name").unwrap(), FixedColumnDesc {
+/// assert_eq!(FixedColumnDesc::from_str("+5,10-Name").unwrap(), FixedColumnDesc {
 ///     start: FixedFieldStart::Offset(5),
 ///     length: 10,
 ///     name: Some(String::from("Name")),
@@ -153,7 +153,7 @@ impl FromStr for FixedColumnDesc {
         // "2,3;Name" => Some("Name")
         // "2,3;" or "2,3" or "2" => None
         let (rest, name) = s
-            .split_once(";")
+            .split_once('-')
             .map(|(rest, name)| {
                 (
                     rest,
@@ -225,4 +225,18 @@ fn parse_single_char(arg: &str) -> Result<u8, &'static str> {
     }
 
     Ok(bytes[0])
+}
+
+pub(crate) fn escape_string(writer: &mut impl Write, s: &[u8]) -> Result<()> {
+    let mut buf = Vec::with_capacity(s.len() + 10);
+
+    json::JsonValue::String(
+        String::from_utf8(s.to_vec()).context("Cannot escape non-utf8 string")?,
+    )
+    .write(&mut buf)
+    .context("Can not write escaped json to output")?;
+
+    std::io::copy(&mut &buf[1..buf.len() - 1], writer)?;
+
+    Ok(())
 }

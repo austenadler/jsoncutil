@@ -234,7 +234,8 @@ impl ParserInner {
             let wanted_len = column_len - already_read_bytes;
             // The number of bytes we can actually read from the buf
             let available_len = std::cmp::min(wanted_len, buf.len());
-            self.write(&mut writer, &buf[0..available_len])?;
+            // self.write(&mut writer, &buf[0..available_len])?;
+            crate::escape_string(&mut writer, &buf[0..available_len])?;
             reader.consume(available_len);
             already_read_bytes += available_len;
 
@@ -401,7 +402,7 @@ mod tests {
 
         assert_eq!(
             dbg!(
-                to_column_descs_inner(dbg!(["1", "10;Second", "12,1;", "+2,8"]
+                to_column_descs_inner(dbg!(["1", "10-Second", "12,1-", "+2,8"]
                     .into_iter()
                     .map(|d| FixedColumnDesc::from_str(d).expect("Could not parse column desc"))
                     .collect::<Vec<_>>()))
