@@ -91,12 +91,16 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             }
 
             let c = buf[0];
-            // eprintln!("[{:?} => {:?}]", self.state, c as char);
+            eprintln!("[{:?} => {:?}]", self.state, c as char);
             match self.state {
                 ParserState::WaitingForRow { saw_cr } => match c {
                     b'\n' | b'\r' => {
                         if saw_cr && c == b'\n' {
                             // We saw a CR, but now we see an LF, so the LF is ignored
+                            self.reader.consume(1);
+                        } else if c == b'\n' && self.first_row && self.object_format_names.is_some()
+                        {
+                            // We parsed a header row, and then got a newline
                             self.reader.consume(1);
                         } else {
                             // This is empty, so start and then end the row

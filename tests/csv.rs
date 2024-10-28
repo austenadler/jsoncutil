@@ -10,90 +10,117 @@ use strum::{EnumIter, IntoEnumIterator};
 
 #[test]
 fn test_csv() {
-    // No header
-    {
+    for newline in &[
+        "\n", "\r\n", //, "\r"
+    ] {
         for rec1 in RecordValue::iter() {
             for rec2 in RecordValue::iter() {
                 for rec3 in RecordValue::iter() {
-                    let input = format!("{rec1},{rec2},{rec3}");
-                    let csv_args = CsvArgs {
-                        quote_character: b'"',
-                        field_separator: b',',
-                        skip_header: false,
+                    dbg!((&newline, &rec1, &rec2, &rec3));
+                    let header = "Abc,\"DeF\",\"GH\nIJ\"";
 
-                        wrap: true,
-                        object_format: false,
-                    };
-                    let output = test_single_csv(csv_args, input.as_bytes());
+                    // No header
+                    {
+                        eprintln!("No header");
+                        let input = format!("{rec1},{rec2},{rec3}");
+                        let csv_args = CsvArgs {
+                            quote_character: b'"',
+                            field_separator: b',',
+                            skip_header: false,
 
-                    assert_eq!(
-                        output,
-                        json!([[
-                            rec1.to_json_value(),
-                            rec2.to_json_value(),
-                            rec3.to_json_value(),
-                        ]])
-                    );
-                }
-            }
-        }
-    }
+                            wrap: true,
+                            object_format: false,
+                        };
+                        let output = test_single_csv(csv_args, input.as_bytes());
 
-    // With skipped header
-    {
-        let header = "Abc,\"DeF\",\"GH\nIJ\"\n";
-        for rec1 in RecordValue::iter() {
-            for rec2 in RecordValue::iter() {
-                for rec3 in RecordValue::iter() {
-                    let input = format!("{header}{rec1},{rec2},{rec3}");
-                    let csv_args = CsvArgs {
-                        quote_character: b'"',
-                        field_separator: b',',
-                        skip_header: true,
+                        assert_eq!(
+                            output,
+                            json!([[
+                                rec1.to_json_value(),
+                                rec2.to_json_value(),
+                                rec3.to_json_value(),
+                            ]])
+                        );
+                    }
 
-                        wrap: true,
-                        object_format: false,
-                    };
-                    let output = test_single_csv(csv_args, input.as_bytes());
+                    // No header; multiple rows
+                    {
+                        eprintln!("No header; multiple rows");
+                        let input = format!("{rec1},{rec2},{rec3}{newline}{rec1},{rec2},{rec3}");
+                        let csv_args = CsvArgs {
+                            quote_character: b'"',
+                            field_separator: b',',
+                            skip_header: false,
 
-                    assert_eq!(
-                        output,
-                        json!([[
-                            rec1.to_json_value(),
-                            rec2.to_json_value(),
-                            rec3.to_json_value(),
-                        ]])
-                    );
-                }
-            }
-        }
-    }
+                            wrap: true,
+                            object_format: false,
+                        };
+                        let output = test_single_csv(csv_args, input.as_bytes());
 
-    // With header and object mode
-    {
-        let header = "Abc,\"DeF\",\"GH\nIJ\"\n";
-        for rec1 in RecordValue::iter() {
-            for rec2 in RecordValue::iter() {
-                for rec3 in RecordValue::iter() {
-                    let input = format!("{header}{rec1},{rec2},{rec3}");
-                    let csv_args = CsvArgs {
-                        quote_character: b'"',
-                        field_separator: b',',
-                        skip_header: false,
+                        assert_eq!(
+                            output,
+                            json!([
+                                [
+                                    rec1.to_json_value(),
+                                    rec2.to_json_value(),
+                                    rec3.to_json_value(),
+                                ],
+                                [
+                                    rec1.to_json_value(),
+                                    rec2.to_json_value(),
+                                    rec3.to_json_value(),
+                                ]
+                            ])
+                        );
+                    }
 
-                        wrap: true,
-                        object_format: true,
-                    };
-                    let output = test_single_csv(csv_args, input.as_bytes());
+                    // With skipped header
+                    {
+                        eprintln!("With skipped header");
+                        let input = format!("{header}{newline}{rec1},{rec2},{rec3}");
+                        let csv_args = CsvArgs {
+                            quote_character: b'"',
+                            field_separator: b',',
+                            skip_header: true,
 
-                    assert_eq!(
-                        output,
-                        json!([{
-                            "Abc": rec1.to_json_value(),
-                            "DeF": rec2.to_json_value(),
-                            "GH\nIJ": rec3.to_json_value(),
-                        }])
-                    );
+                            wrap: true,
+                            object_format: false,
+                        };
+                        let output = test_single_csv(csv_args, input.as_bytes());
+
+                        assert_eq!(
+                            output,
+                            json!([[
+                                rec1.to_json_value(),
+                                rec2.to_json_value(),
+                                rec3.to_json_value(),
+                            ]])
+                        );
+                    }
+
+                    // With header and object mode
+                    {
+                        eprintln!("With header and object mode");
+                        let input = format!("{header}{newline}{rec1},{rec2},{rec3}");
+                        let csv_args = CsvArgs {
+                            quote_character: b'"',
+                            field_separator: b',',
+                            skip_header: false,
+
+                            wrap: true,
+                            object_format: true,
+                        };
+                        let output = test_single_csv(csv_args, input.as_bytes());
+
+                        assert_eq!(
+                            output,
+                            json!([{
+                                "Abc": rec1.to_json_value(),
+                                "DeF": rec2.to_json_value(),
+                                "GH\nIJ": rec3.to_json_value(),
+                            }])
+                        );
+                    }
                 }
             }
         }
@@ -101,7 +128,10 @@ fn test_csv() {
 }
 
 fn test_single_csv(csv_args: CsvArgs, text: &[u8]) -> serde_json::Value {
-    eprintln!("Testing: <<<\n{}\n>>>", String::from_utf8_lossy(text));
+    eprintln!(
+        "Testing ({csv_args:?}): <<<\n{:?}\n>>>",
+        String::from_utf8_lossy(text)
+    );
 
     let mut writer = vec![];
 
