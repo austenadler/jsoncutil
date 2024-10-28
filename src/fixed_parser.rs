@@ -33,7 +33,7 @@ impl ColumnDescInner {
 impl Parser {
     pub fn new(args: FixedArgs) -> Result<Self> {
         Ok(Self {
-            column_descs: dbg!(to_column_descs_inner(args.column)?),
+            column_descs: to_column_descs_inner(args.column)?,
         })
     }
 
@@ -133,8 +133,8 @@ impl ParserInner {
 
         loop {
             let mut buf = reader.fill_buf()?;
-            eprintln!("{:?}", self.state);
-            eprintln!("Got buf: {:?}", String::from_utf8_lossy(buf));
+            // eprintln!("{:?}", self.state);
+            // eprintln!("Got buf: {:?}", String::from_utf8_lossy(buf));
 
             if buf.is_empty() {
                 break;
@@ -242,7 +242,7 @@ impl ParserInner {
                 // We are done with this column
                 self.end_field(&mut writer)?;
 
-                self.state = if dbg!(self.column_descs.len()) <= col + 1 {
+                self.state = if self.column_descs.len() <= col + 1 {
                     // This was the last column in the row, too. End the row
                     self.end_row(&mut writer)?;
                     ParserRowState::DoneReading
@@ -271,7 +271,7 @@ impl ParserInner {
 
     /// If we are in the middle of writing a row out, we know we ended prematurely, and the rest of the columns are empty
     fn drain_remaining_empty(&mut self, writer: &mut impl Write) -> Result<()> {
-        eprintln!("Draining: {:?}", self.state);
+        // eprintln!("Draining: {:?}", self.state);
         match self.state {
             ParserRowState::Waiting { .. } => {
                 self.start_row(writer)?;
@@ -332,7 +332,7 @@ impl ParserInner {
 
     fn write(&mut self, writer: &mut impl Write, buf: &[u8]) -> Result<()> {
         if self.should_print() {
-            eprintln!("> Writing: {:?}", String::from_utf8_lossy(buf));
+            // eprintln!("> Writing: {:?}", String::from_utf8_lossy(buf));
             writer.write_all(buf)?;
         }
 
