@@ -268,10 +268,6 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
     }
 
     fn end_row(&mut self) -> Result<()> {
-        // We ended at least 1 row, so we are not on the first row anymore
-        // But do this after we try writing ]
-        self.first_row = false;
-
         let ret = if let Some(object_format_names) = &self.object_format_names {
             // Object mode
             if object_format_names.len() != self.current_column {
@@ -282,6 +278,11 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             // Array mode
             self.write(b"]")
         };
+
+        // We ended at least 1 row, so we are not on the first row anymore
+        // But do this after we try writing ]
+        self.first_row = false;
+
         ret
     }
 
