@@ -99,6 +99,15 @@ pub struct CsvArgs {
 
     #[clap(short = 'w', long, help = "Wrap output in an array")]
     pub wrap: bool,
+
+    /// Output in object format instead of array format
+    #[clap(
+        short = 'O',
+        long = "object",
+        global = true,
+        conflicts_with = "skip_header"
+    )]
+    pub object_format: bool,
 }
 
 #[derive(Args, Debug, Clone)]

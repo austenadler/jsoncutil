@@ -74,6 +74,9 @@ struct Cli {
         conflicts_with = "inplace"
     )]
     json_output: Option<IoArg>,
+
+    #[clap(short = 'U', long, help = "Allow unbounded operations", global = true)]
+    unbounded: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -229,6 +232,10 @@ fn main() -> Result<()> {
         }
         Some(Command::Watch(a)) => watch(&cli, a)?,
         Some(Command::Csv(csv_args)) => {
+            if !cli.unbounded && csv_args.object_format {
+                bail!("-O requires you to set -U to allow unbounded operation");
+            }
+
             // The input is CSV, so we hvae to use the csv parser
             format_single_csv(
                 cli.input.clone(),
@@ -306,7 +313,10 @@ fn format_single_csv(
     let parser = csv_parser::Parser::new(csv_args);
     let handle = std::thread::spawn(move || -> Result<()> {
         // let br = input_to_reader(&input)?;
-        parser.parse_buf(&mut input.to_reader()?, writer)?;
+        let ret = parser.parse_buf(&mut input.to_reader()?, writer);
+        if let Err(e) = ret {
+            eprintln!("{e:?}");
+        }
         Ok(())
     });
 

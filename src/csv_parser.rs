@@ -39,6 +39,8 @@ impl Parser {
             writer: BufWriter::new(writer),
             state: ParserState::WaitingForRow { saw_cr: false },
             args: self.csv_args,
+            // These will be parsed later
+            object_format_names: None,
         }
         .parse_buf()
     }
@@ -50,10 +52,19 @@ struct ParserInner<R: BufRead, W: Write> {
     writer: W,
     state: ParserState,
     args: CsvArgs,
+    object_format_names: Option<Vec<String>>,
 }
 
 impl<R: BufRead, W: Write> ParserInner<R, W> {
     fn parse_buf(mut self) -> Result<()> {
+        // If they requested it, parse the header
+        self.object_format_names = dbg!(self
+            .args
+            .object_format
+            .then(|| self.parse_header_row())
+            .transpose()
+            .context("Getting CSV header"))?;
+
         if self.args.wrap {
             self.writer
                 .write_all(b"[")
@@ -274,5 +285,36 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             b'\t' => self.write(b"\\t"),
             c => self.write(&[c]),
         }
+    }
+
+    /// Parse the header row of this CSV
+    ///
+    /// WARNING: Unbounded, since the header can be gigantic
+    fn parse_header_row(&mut self) -> Result<Vec<String>> {
+        // Doesn't work because the header might
+        // Input is a buffer that contains only the first line
+        // let mut first_line = vec![];
+        // self.reader
+        //     .read_until(b'\n', &mut first_line)
+        //     .context("Reading first line")?;
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            // This buffer capacity is terrible, but required because we do not want to consume too much
+            .buffer_capacity(1)
+            .from_reader(&mut self.reader);
+        // .from_reader(&first_line[..]);
+        let ret: Vec<String> = reader
+            .records()
+            .next()
+            .context("Empty line")?
+            .context("Could not read row")?
+            .iter()
+            .map(|r| r.to_string())
+            .collect();
+        if ret.is_empty() {
+            bail!("Empty");
+        }
+        Ok(ret)
     }
 }
