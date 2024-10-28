@@ -41,6 +41,8 @@ impl Parser {
             args: self.csv_args,
             // These will be parsed later
             object_format_names: None,
+            current_column: 0,
+            current_row: 0,
         }
         .parse_buf()
     }
@@ -53,17 +55,27 @@ struct ParserInner<R: BufRead, W: Write> {
     state: ParserState,
     args: CsvArgs,
     object_format_names: Option<Vec<String>>,
+    current_column: usize,
+    current_row: usize,
 }
 
 impl<R: BufRead, W: Write> ParserInner<R, W> {
     fn parse_buf(mut self) -> Result<()> {
+        self.parse_buf_inner()
+            .with_context(|| format!("Error near CSV row {}", self.current_row))
+    }
+
+    fn parse_buf_inner(&mut self) -> Result<()> {
         // If they requested it, parse the header
-        self.object_format_names = dbg!(self
+        self.object_format_names = self
             .args
             .object_format
-            .then(|| self.parse_header_row())
+            .then(|| {
+                self.current_row += 1;
+                self.parse_header_row()
+            })
             .transpose()
-            .context("Getting CSV header"))?;
+            .context("Getting CSV header")?;
 
         if self.args.wrap {
             self.writer
@@ -239,22 +251,55 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
     }
 
     fn start_row(&mut self) -> Result<()> {
-        self.write(b"[")
+        self.current_row += 1;
+
+        if self.object_format_names.is_some() {
+            // Object mode
+            self.current_column = 0;
+            self.write(b"{")
+        } else {
+            // Array mode
+            self.write(b"[")
+        }
     }
 
     fn end_row(&mut self) -> Result<()> {
-        let ret = self.write(b"]");
         // We ended at least 1 row, so we are not on the first row anymore
         // But do this after we try writing ]
         self.first_row = false;
+
+        let ret = if let Some(object_format_names) = &self.object_format_names {
+            // Object mode
+            if object_format_names.len() != self.current_column {
+                bail!("Row did not have enough columns");
+            }
+            self.write(b"}")
+        } else {
+            // Array mode
+            self.write(b"]")
+        };
         ret
     }
 
     fn start_field(&mut self) -> Result<()> {
-        self.write(b"\"")
+        if let Some(object_format_names) = &self.object_format_names {
+            // Object mode
+            self.writer.write_all(
+                object_format_names
+                    .get(self.current_column)
+                    .context("Row has too many columns")?
+                    .as_bytes(),
+            )?;
+            self.write(b":\"")
+        } else {
+            // Array mode
+            self.write(b"\"")
+        }
     }
 
     fn end_field(&mut self) -> Result<()> {
+        self.current_column += 1;
+
         self.write(b"\",")
     }
 
@@ -310,7 +355,16 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             .context("Empty line")?
             .context("Could not read row")?
             .iter()
-            .map(|r| r.to_string())
+            .map(|header_name| {
+                let mut ret = Vec::new();
+                json::JsonValue::String(header_name.to_string())
+                    .write(&mut ret)
+                    .expect("Could not serialize argument name as json");
+                let ret: String = String::from_utf8(ret)
+                    .expect("Internal error: json-encoded string is no longer utf8");
+
+                ret
+            })
             .collect();
         if ret.is_empty() {
             bail!("Empty");
