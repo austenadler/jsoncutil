@@ -41,9 +41,11 @@ impl Parser {
         // CSVs can have a BOM, so use encoding-rs to decode it
         let decoded_reader = BufReader::new(DecodeReaderBytes::new(reader));
 
+        let state = ParserRowState::default();
+
         ParserInner {
             first_row: true,
-            state: ParserRowState::default(),
+            state,
             column_descs: self.column_descs,
         }
         .parse_buf(decoded_reader, writer)
@@ -64,7 +66,9 @@ fn to_column_descs_inner(columns: Vec<FixedColumnDesc>) -> Result<Vec<ColumnDesc
         let from = match c.start {
             FixedFieldStart::Position(n) => {
                 // The arguments are 1-indexed, but this is 0-indexed
-                let n = n - 1;
+                let n = n
+                    .checked_sub(1)
+                    .expect("Columns are 1-indexed; do not provide 0 as an index");
 
                 if n < previous_end {
                     bail!(
@@ -105,6 +109,9 @@ enum ParserRowState {
         saw_cr: bool,
     },
     Within {
+        // Number of bytes required to skip before parsing this column
+        skip: usize,
+        // Index of the column we are within
         col: usize,
         /// The number of bytes we read in this column, or 0
         already_read_bytes: usize,
@@ -143,6 +150,11 @@ impl ParserInner {
                 // We saw a newline
                 // Make sure any columns that we were expecting are output as empty
                 self.drain_remaining_empty(&mut writer)?;
+                // if matches!(self.state, ParserRowState::Waiting { .. }) {
+                //     self.start_row(&mut writer)?;
+                //     self.drain_remaining_empty(&mut writer)?;
+                //     self.end_row(&mut writer)?;
+                // }
                 self.state = ParserRowState::Waiting {
                     saw_cr: buf[0] == b'\r',
                 };
@@ -159,18 +171,49 @@ impl ParserInner {
             // Buf now contains a (maybe complete) row
             // If we were waiting for a row, we no longer are waiting
             let (col, mut already_read_bytes) = match self.state {
+                ParserRowState::Within {
+                    skip: 0,
+                    col,
+                    already_read_bytes,
+                } => {
+                    // We are ready to read the column data
+                    (col, already_read_bytes)
+                }
                 ParserRowState::Waiting { saw_cr: _saw_cr } => {
                     self.state = ParserRowState::Within {
+                        skip: self.column_descs[0].range.start,
                         col: 0,
                         already_read_bytes: 0,
                     };
                     self.start_row(&mut writer)?;
-                    (0, 0)
+                    continue;
                 }
                 ParserRowState::Within {
+                    skip,
                     col,
                     already_read_bytes,
-                } => (col, already_read_bytes),
+                } => {
+                    // We need to discard `skip` bytes before we start reading the column data
+                    self.state = if skip > buf.len() {
+                        // This buffer won't completely satisfy the skip count
+                        let buf_len = buf.len();
+                        reader.consume(buf_len);
+                        ParserRowState::Within {
+                            skip: skip - buf_len,
+                            col,
+                            already_read_bytes,
+                        }
+                    } else {
+                        // We can consume the rest required
+                        reader.consume(skip);
+                        ParserRowState::Within {
+                            skip: 0,
+                            col,
+                            already_read_bytes: 0,
+                        }
+                    };
+                    continue;
+                }
                 ParserRowState::DoneReading => {
                     // We are done witih this row already. Consume the rest of buf, since we don't care about it
                     let buf_len = buf.len();
@@ -185,10 +228,12 @@ impl ParserInner {
                 self.start_field(&mut writer)?;
             }
 
+            // The width of this column
             let column_len = self.column_descs[col].len();
+            // The width of the column - the number of bytes we've already read
             let wanted_len = column_len - already_read_bytes;
+            // The number of bytes we can actually read from the buf
             let available_len = std::cmp::min(wanted_len, buf.len());
-            // self.write(&buf[0..column_len])?;
             self.write(&mut writer, &buf[0..available_len])?;
             reader.consume(available_len);
             already_read_bytes += available_len;
@@ -204,6 +249,8 @@ impl ParserInner {
                 } else {
                     // We have another column in this row
                     ParserRowState::Within {
+                        skip: self.column_descs[col + 1].range.start
+                            - self.column_descs[col].range.end,
                         col: col + 1,
                         already_read_bytes: 0,
                     }
@@ -211,10 +258,10 @@ impl ParserInner {
             } else {
                 // This buf did not completely encompass the field
                 // Increase the number of bytes read and leave the column number alone
-
                 self.state = ParserRowState::Within {
                     col,
                     already_read_bytes,
+                    skip: 0,
                 }
             }
         }
@@ -226,11 +273,27 @@ impl ParserInner {
     fn drain_remaining_empty(&mut self, writer: &mut impl Write) -> Result<()> {
         eprintln!("Draining: {:?}", self.state);
         match self.state {
-            ParserRowState::Waiting { .. } => {}
+            ParserRowState::Waiting { .. } => {
+                self.start_row(writer)?;
+
+                // For every column after this one, output as empty
+                for _ in 0..self.column_descs.len() {
+                    self.start_field(writer)?;
+                    self.end_field(writer)?;
+                }
+
+                self.end_row(writer)?;
+            }
             ParserRowState::Within {
                 col,
-                already_read_bytes: _,
+                skip: _,
+                already_read_bytes,
             } => {
+                if already_read_bytes == 0 && self.column_descs[col].range.end != already_read_bytes
+                {
+                    // We didn't finish reading this column
+                    self.start_field(writer)?;
+                }
                 self.end_field(writer)?;
 
                 // For every column after this one, output as empty
