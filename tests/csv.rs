@@ -70,7 +70,7 @@ fn test_csv() {
                                         rec1.to_json_value(),
                                         rec2.to_json_value(),
                                         rec3.to_json_value(),
-                                    ]
+                                    ],
                                 ])
                             );
                         }
@@ -160,12 +160,6 @@ fn parse_jsonc_as_json_value(value: &[u8]) -> serde_json::Value {
     serde_json::from_slice::<serde_json::Value>(&writer[..])
         .expect("JSON should have been parsable")
 }
-
-// #[derive(Debug, EnumIter)]
-// enum PossibleEncoding {
-//     Ascii,
-//     // Utf8,
-// }
 
 #[derive(Debug, EnumIter)]
 enum RecordValue {
