@@ -5,7 +5,7 @@ A utility for formatting JSON and JSONC (JSON + Trailing Commas + Comments and n
 == Features
 
 * JSONC <=> JSON stream and file conversion
-* Streaming - 
+* Streaming - Can be used in a pipeline
 * Bounded - input is formatted as a stream, not loaded memory first
 ** `-U` allows unbounded memory usage when files are from a trustworthy source
 * Fast - faster than most other formatters I have found due to streaming nature
