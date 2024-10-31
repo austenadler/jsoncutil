@@ -10,119 +10,134 @@ use strum::{EnumIter, IntoEnumIterator};
 
 #[test]
 fn test_csv() {
-    for maybe_newline in &["", "\n", "\r\n", "\r"] {
-        for newline in &["\n", "\r\n", "\r"] {
-            for rec1 in RecordValue::iter() {
-                for rec2 in RecordValue::iter() {
-                    for rec3 in RecordValue::iter() {
-                        dbg!((&newline, &rec1, &rec2, &rec3));
-                        let header = "Abc,\"DeF\",\"GH\nIJ\"";
+    for bom in &[vec![], vec![0xef, 0xbb, 0xbf]] {
+        for maybe_newline in &["", "\n", "\r\n", "\r"] {
+            for newline in &["\n", "\r\n", "\r"] {
+                for rec1 in RecordValue::iter() {
+                    for rec2 in RecordValue::iter() {
+                        for rec3 in RecordValue::iter() {
+                            dbg!((&newline, &rec1, &rec2, &rec3));
+                            let header = "Abc,\"DeF\",\"GH\nIJ\"";
 
-                        // No header
-                        {
-                            eprintln!("No header");
-                            let input = format!("{rec1},{rec2},{rec3}{maybe_newline}");
-                            let csv_args = CsvArgs {
-                                quote_character: b'"',
-                                field_separator: b',',
-                                skip_header: false,
+                            // No header
+                            {
+                                eprintln!("No header");
+                                let mut input = bom.to_vec();
+                                input.extend_from_slice(
+                                    format!("{rec1},{rec2},{rec3}{maybe_newline}").as_bytes(),
+                                );
+                                let csv_args = CsvArgs {
+                                    quote_character: b'"',
+                                    field_separator: b',',
+                                    skip_header: false,
 
-                                wrap: true,
-                                object_format: false,
-                            };
-                            let output = test_single_csv(csv_args, input.as_bytes());
+                                    wrap: true,
+                                    object_format: false,
+                                };
+                                let output = test_single_csv(csv_args, &input[..]);
 
-                            assert_eq!(
-                                output,
-                                json!([[
-                                    rec1.to_json_value(),
-                                    rec2.to_json_value(),
-                                    rec3.to_json_value(),
-                                ]])
-                            );
-                        }
+                                assert_eq!(
+                                    output,
+                                    json!([[
+                                        rec1.to_json_value(),
+                                        rec2.to_json_value(),
+                                        rec3.to_json_value(),
+                                    ]])
+                                );
+                            }
 
-                        // No header; multiple rows
-                        {
-                            eprintln!("No header; multiple rows");
-                            let input = format!(
+                            // No header; multiple rows
+                            {
+                                eprintln!("No header; multiple rows");
+                                let mut input = bom.to_vec();
+                                input.extend_from_slice(
+                                    format!(
                                 "{rec1},{rec2},{rec3}{newline}{rec1},{rec2},{rec3}{maybe_newline}"
-                            );
-                            let csv_args = CsvArgs {
-                                quote_character: b'"',
-                                field_separator: b',',
-                                skip_header: false,
+                            )
+                                    .as_bytes(),
+                                );
+                                let csv_args = CsvArgs {
+                                    quote_character: b'"',
+                                    field_separator: b',',
+                                    skip_header: false,
 
-                                wrap: true,
-                                object_format: false,
-                            };
-                            let output = test_single_csv(csv_args, input.as_bytes());
+                                    wrap: true,
+                                    object_format: false,
+                                };
+                                let output = test_single_csv(csv_args, &input[..]);
 
-                            assert_eq!(
-                                output,
-                                json!([
-                                    [
+                                assert_eq!(
+                                    output,
+                                    json!([
+                                        [
+                                            rec1.to_json_value(),
+                                            rec2.to_json_value(),
+                                            rec3.to_json_value(),
+                                        ],
+                                        [
+                                            rec1.to_json_value(),
+                                            rec2.to_json_value(),
+                                            rec3.to_json_value(),
+                                        ],
+                                    ])
+                                );
+                            }
+
+                            // With skipped header
+                            {
+                                eprintln!("With skipped header");
+                                let mut input = bom.to_vec();
+                                input.extend_from_slice(
+                                    format!("{header}{newline}{rec1},{rec2},{rec3}{maybe_newline}")
+                                        .as_bytes(),
+                                );
+                                let csv_args = CsvArgs {
+                                    quote_character: b'"',
+                                    field_separator: b',',
+                                    skip_header: true,
+
+                                    wrap: true,
+                                    object_format: false,
+                                };
+                                let output = test_single_csv(csv_args, &input[..]);
+
+                                assert_eq!(
+                                    output,
+                                    json!([[
                                         rec1.to_json_value(),
                                         rec2.to_json_value(),
                                         rec3.to_json_value(),
-                                    ],
-                                    [
-                                        rec1.to_json_value(),
-                                        rec2.to_json_value(),
-                                        rec3.to_json_value(),
-                                    ],
-                                ])
-                            );
-                        }
+                                    ]])
+                                );
+                            }
 
-                        // With skipped header
-                        {
-                            eprintln!("With skipped header");
-                            let input =
-                                format!("{header}{newline}{rec1},{rec2},{rec3}{maybe_newline}");
-                            let csv_args = CsvArgs {
-                                quote_character: b'"',
-                                field_separator: b',',
-                                skip_header: true,
+                            // With header and object mode
+                            {
+                                eprintln!("With header and object mode");
+                                let mut input = bom.to_vec();
+                                input.extend_from_slice(
+                                    format!("{header}{newline}{rec1},{rec2},{rec3}{maybe_newline}")
+                                        .as_bytes(),
+                                );
+                                let csv_args = CsvArgs {
+                                    quote_character: b'"',
+                                    field_separator: b',',
+                                    skip_header: false,
 
-                                wrap: true,
-                                object_format: false,
-                            };
-                            let output = test_single_csv(csv_args, input.as_bytes());
+                                    wrap: true,
+                                    object_format: true,
+                                };
+                                let output = test_single_csv(csv_args, &input[..]);
 
-                            assert_eq!(
-                                output,
-                                json!([[
-                                    rec1.to_json_value(),
-                                    rec2.to_json_value(),
-                                    rec3.to_json_value(),
-                                ]])
-                            );
-                        }
-
-                        // With header and object mode
-                        {
-                            eprintln!("With header and object mode");
-                            let input =
-                                format!("{header}{newline}{rec1},{rec2},{rec3}{maybe_newline}");
-                            let csv_args = CsvArgs {
-                                quote_character: b'"',
-                                field_separator: b',',
-                                skip_header: false,
-
-                                wrap: true,
-                                object_format: true,
-                            };
-                            let output = test_single_csv(csv_args, input.as_bytes());
-
-                            assert_eq!(
-                                output,
-                                json!([{
-                                    "Abc": rec1.to_json_value(),
-                                    "DeF": rec2.to_json_value(),
-                                    "GH\nIJ": rec3.to_json_value(),
-                                }])
-                            );
+                                assert_eq!(
+                                    output,
+                                    json!([{
+                                        "Abc": rec1.to_json_value(),
+                                        "DeF": rec2.to_json_value(),
+                                        "GH\nIJ": rec3.to_json_value(),
+                                    }])
+                                );
+                            }
                         }
                     }
                 }
