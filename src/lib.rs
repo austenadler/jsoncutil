@@ -113,7 +113,10 @@ pub struct CsvArgs {
 #[derive(Args, Debug, Clone)]
 pub struct FixedArgs {
     /// A list of columns in the fixed width file
-    #[clap(short = 'C', long, value_parser = FixedColumnDesc::from_str)]
+    #[clap(
+        short = 'C', long, value_parser = FixedColumnDesc::from_str,
+        help = "A fixed column description in the format [+OFFSET,]WIDTH[-FIELD_NAME] or [POSITION,]WIDTH[-FIELD_NAME] where OFFSET is the offset from the end of the previous column"
+    )]
     pub column: Vec<FixedColumnDesc>,
 
     /// Output in object format instead of array format

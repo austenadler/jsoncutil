@@ -1,0 +1,257 @@
+= jsoncutil
+
+A utility for formatting JSON and JSONC (JSON + Trailing Commas + Comments and nothing more).
+
+== Features
+
+* JSONC <=> JSON stream and file conversion
+* Streaming - 
+* Bounded - input is formatted as a stream, not loaded memory first
+** `-U` allows unbounded memory usage when files are from a trustworthy source
+* Fast - faster than most other formatters I have found due to streaming nature
+* CSV and Fixed Width conversion to JSON/JSONC - as JSONLINES arrays/objects, or as an array of objects
+* File format table
++
+|===
+|Input |To JSON |To array |To object
+
+|JSON or JSONC
++
+[source,json]
+----
+{"a": [null,],}
+----
+
+|JSON or JSONC
++
+[source,json]
+----
+{"a":[null]}
+# OR
+{
+  "a": [
+    null
+  ]
+}
+# OR
+{
+  "a": [
+    null,
+  ],
+}
+----
+
+|N/A
+|N/A
+
+|CSV
++
+[source,csv]
+----
+name,place,age
+darwin,,10
+----
+
+|JSON/JSONC array
++
+[source,json]
+----
+["name","place","age"]
+["darwin","","10"]
+
+# OR
+
+[
+    ["name","place","age"],
+    ["darwin","","10"]
+]
+----
+
+|JSON/JSONC object
++
+[source,json]
+----
+{"name":"darwin","place":"","age":"10"}
+----
+
+|Fixed Width
++
+[source,csv]
+----
+name    | place | age
+darwin  |       | 10
+----
+
+|JSON/JSONC array `jsoncutil fixed --compact -C8 -C+2,6 -C+2,3`
++
+[source,json]
+----
+["name    ","place ","age"]
+["darwin  ","      ","10"]
+----
+
+|JSON/JSONC object `jsoncutil fixed --compact --object -C8 -C+2,6 -C+2,3`
++
+[source,json]
+----
+{"Column 1":"name    ","Column 2":"place ","Column 3":"age"}
+{"Column 1":"darwin  ","Column 2":"      ","Column 3":"10"}
+----
+
+|===
+
+== Motivation
+
+JSONC has many obvious benefits:
+
+* Not divorced from JOSN - only two things are allowed: optional trailing commas and optional comments
+* Trailing commas normalize text files, so operations like find and replace do not have edge cases at the end of collections
+
+Some tools exist but they didn't fit all of my requirements
+
+* Streaming - Large files shouldn't brick my system or be OOM killed
+* Format JSONC
+* Fast
+
+== Usage
+
+=== Flags
+
+=== As a Standalone Tool
+
+[source,json,title='input.jsonc']
+----
+{ "This is a jsonc": ["file"],
+    "So it can have trailing": "Commas:",
+  // And also
+      /* comments */
+}
+----
+
+* Format jsonc with `jsoncutil input.jsonc`
++
+[source,sh]
+----
+{
+  "This is a jsonc": [
+    "file",
+  ],
+  "So it can have trailing": "Commas:",
+  // And also
+  /* comments */
+}
+----
+
+* Convert to json with `jsoncutil --json input.jsonc`
++
+[source,sh]
+----
+{
+  "This is a jsonc": [
+    "file"
+  ],
+  "So it can have trailing": "Commas:"
+}
+----
+
+* Convert to compact json with `jsoncutil --compact input.jsonc`
++
+[source,sh]
+----
+{"This is a jsonc":["file"],"So it can have trailing":"Commas:"}
+----
+
+* Convert a CSV file to JSON lines with `jsoncutil csv --unbounded --object --compact input.csv`
++
+[source,csv,title='input.csv']
+----
+field1,field2,field3
+value1,value2,value3
+value4,value5,value6
+----
++
+[source,sh]
+----
+{"field1":"value1","field2":"value2","field3":"value3"}
+{"field1":"value4","field2":"value5","field3":"value6"}
+----
+
+=== As an editor utility
+
+You can configure your editor to format json files to jsonc on open, and then format them back to json on save
+
+==== Kakoune
+
+[source,kak,title='kakrc']
+----
+hook global WinSetOption filetype=(json) %{
+    set-option buffer formatcmd "jsoncutil --json"
+    hook buffer BufWritePre .* format
+}
+
+hook global WinSetOption filetype=(jsoncc) %{
+    set-option buffer formatcmd "jsoncutil"
+    hook buffer BufWritePre .* format
+}
+----
+
+==== Vim
+
+[source,viml,title='~/.vimrc']
+----
+" Format json as jsonc on open
+autocmd FileType json autocmd BufReadPost <buffer> %!jsoncutil
+" Save as json on save
+autocmd FileType json autocmd BufWritePre <buffer> %!jsoncutil --json
+
+" Format as jsonc on save
+autocmd FileType jsonc autocmd BufWritePre <buffer> %!jsoncutil
+----
+
+== Benchmarks
+
+Benchmarking
+
+[source,sh,title='sh']
+----
+INPUT="< out.csv > /dev/null"; hyperfine --warmup 10 \
+    "jsoncutil csv ${INPUT}" \
+    "jsonxf ${INPUT}" \
+    "jq . ${INPUT}" \
+    "prettier --parser json ${INPUT}"
+
+INPUT="< out.csv > /dev/null"; hyperfine --export-markdown benchmarks.md --warmup 10 \
+    "jsoncutil csv ${INPUT}" \
+    "jsonxf ${INPUT}" \
+    "jq . ${INPUT}" \
+    "prettier --parser json ${INPUT}"
+----
+
+Output
+
+[source]
+----
+Benchmark 1: ./target/release/jsoncutil < large-file.json > /dev/null
+  Time (mean ± σ):      78.8 ms ±   1.2 ms    [User: 71.9 ms, System: 6.7 ms]
+  Range (min … max):    77.2 ms …  83.1 ms    37 runs
+
+Benchmark 2: jsonxf < large-file.json > /dev/null
+  Time (mean ± σ):      42.1 ms ±   1.0 ms    [User: 36.2 ms, System: 5.8 ms]
+  Range (min … max):    41.3 ms …  48.6 ms    66 runs
+
+  Warning: Statistical outliers were detected. Consider re-running this benchmark on a quiet system without any interferences from other programs. It might help to use the '--warmup' or '--prepare' options.
+
+Benchmark 3: jq . < large-file.json > /dev/null
+  Time (mean ± σ):     726.9 ms ±   5.2 ms    [User: 643.0 ms, System: 83.7 ms]
+  Range (min … max):   721.3 ms … 737.9 ms    10 runs
+
+Benchmark 4: prettier --parser json < large-file.json > /dev/null
+  Time (mean ± σ):     14.563 s ±  0.306 s    [User: 23.384 s, System: 2.505 s]
+  Range (min … max):   14.106 s … 15.156 s    10 runs
+
+Summary
+  jsonxf < large-file.json > /dev/null ran
+    1.87 ± 0.05 times faster than ./target/release/jsoncutil < large-file.json > /dev/null
+   17.27 ± 0.42 times faster than jq . < large-file.json > /dev/null
+  345.93 ± 10.89 times faster than prettier --parser json < large-file.json > /dev/null
+----
