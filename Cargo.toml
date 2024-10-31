@@ -20,8 +20,8 @@ oxidized-json-checker = "0.3.2"
 # serde_json = { version = "1.0.132", features = ["preserve_order", "arbitrary_precision"] }
 thiserror = "1.0.63"
 
-[profile.release]
-debug = 2
+# [profile.release]
+# debug = 2
 
 [dev-dependencies]
 serde = { version = "1.0.214", features = ["derive"] }
