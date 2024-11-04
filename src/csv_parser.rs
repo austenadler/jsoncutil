@@ -91,7 +91,7 @@ impl<R: BufRead, W: Write> ParserInner<R, W> {
             }
 
             let c = buf[0];
-            eprintln!("[{:?} => {:?}]", self.state, c as char);
+            // eprintln!("[{:?} => {:?}]", self.state, c as char);
             match self.state {
                 ParserState::WaitingForRow { saw_cr } => match c {
                     b'\n' | b'\r' => {

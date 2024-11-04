@@ -875,8 +875,8 @@ where
                         C_STAR => CommentType::Block,
 
                         c => {
-                            eprintln!("{:#?}", self);
-                            eprintln!("X {:?}", (c as char));
+                //             eprintln!("{:#?}", self);
+                //             eprintln!("X {:?}", (c as char));
                             break Err(Error::UnexpectedChar(c as char));
                         }
                     };
@@ -1057,7 +1057,7 @@ fn string_end(buf: &[u8]) -> StringEnd {
                 }
             }
             Some((idx, chr)) => {
-                eprintln!("Buf: {:?}", String::from_utf8(buf.to_vec()));
+                // eprintln!("Buf: {:?}", String::from_utf8(buf.to_vec()));
                 panic!(
                     "memchr2 returned unexpected result ({} @ {})",
                     *chr as char,
