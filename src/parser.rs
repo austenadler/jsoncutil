@@ -875,8 +875,8 @@ where
                         C_STAR => CommentType::Block,
 
                         c => {
-                //             eprintln!("{:#?}", self);
-                //             eprintln!("X {:?}", (c as char));
+                            //             eprintln!("{:#?}", self);
+                            //             eprintln!("X {:?}", (c as char));
                             break Err(Error::UnexpectedChar(c as char));
                         }
                     };
