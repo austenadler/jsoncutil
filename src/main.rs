@@ -117,6 +117,14 @@ struct FmtArgs {
     compact: bool,
 
     #[clap(
+        short = 'N',
+        long = "no-commas",
+        help = "Exclude all commas",
+        global = true
+    )]
+    no_commas: bool,
+
+    #[clap(
         short = 'I',
         long = "inplace",
         help = "Replace file contents inplace",
@@ -356,7 +364,9 @@ fn format_single_file(
     // First, format jsonc
     if let Some(jsonc_output) = jsonc_output2 {
         let parser = parser::Parser::new(
-            parser::Mode::Jsoncc,
+            parser::Mode::Jsoncc {
+                include_commas: !fmt_args.no_commas,
+            },
             // &mut input,
             // BufWriter::new(std::io::stdout()),
         );

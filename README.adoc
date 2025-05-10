@@ -189,7 +189,7 @@ hook global WinSetOption filetype=(json) %{
     hook buffer BufWritePre .* format
 }
 
-hook global WinSetOption filetype=(jsoncc) %{
+hook global WinSetOption filetype=(jsoncc?) %{
     set-option buffer formatcmd "jsoncutil"
     hook buffer BufWritePre .* format
 }

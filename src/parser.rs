@@ -59,7 +59,10 @@ macro_rules! w {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Mode {
     /// Add trailing commas, and do not strip comments
-    Jsoncc,
+    Jsoncc {
+        /// Exclude all commas
+        include_commas: bool,
+    },
     /// Strip comments, and add whitespace and newlines
     Json,
     /// Strip comments, and strip all optional whitespace
@@ -70,7 +73,7 @@ impl Mode {
     /// Check if the mode wants to keep comments or strip them
     fn keep_comments(&self) -> bool {
         match self {
-            Mode::Jsoncc => true,
+            Mode::Jsoncc { include_commas: _ } => true,
             Mode::Json | Mode::CompactJson => false,
         }
     }
@@ -78,7 +81,9 @@ impl Mode {
 
 impl Default for Mode {
     fn default() -> Self {
-        Self::Jsoncc
+        Self::Jsoncc {
+            include_commas: true,
+        }
     }
 }
 
@@ -495,7 +500,7 @@ where
     /// Add extra padding after `:` or before the `//`/`/*` in a comment, if the format requests it
     fn extra_spacing(&mut self) -> Result<()> {
         match self.mode {
-            Mode::Jsoncc | Mode::Json => w!(self.write, " "),
+            Mode::Jsoncc { include_commas: _ } | Mode::Json => w!(self.write, " "),
             Mode::CompactJson => {}
         }
 
@@ -509,7 +514,18 @@ where
             return Ok(());
         }
 
-        w!(self.write, ",");
+        match self.mode {
+            Mode::Jsoncc {
+                include_commas: true,
+            }
+            | Mode::Json
+            | Mode::CompactJson => {
+                w!(self.write, ",")
+            }
+            Mode::Jsoncc {
+                include_commas: false,
+            } => {}
+        }
 
         Ok(())
     }
@@ -517,7 +533,7 @@ where
     /// Add a trailing comma only if we are not at the root level and we are in [`Mode::Jsoncc`]
     fn trailing_comma(&mut self) -> Result<()> {
         match self.mode {
-            Mode::Jsoncc => self.comma()?,
+            Mode::Jsoncc { include_commas: _ } => self.comma()?,
             Mode::Json | Mode::CompactJson => {}
         }
 
@@ -527,7 +543,7 @@ where
     /// Write a newline and add indentation
     fn newline(&mut self) -> Result<()> {
         match self.mode {
-            Mode::Jsoncc | Mode::Json => {
+            Mode::Jsoncc { include_commas: _ } | Mode::Json => {
                 w!(self.write, NEWLINE);
                 self.write
                     .write_all(self.indentor.get_indent(self.state_stack.len()))?;
@@ -1135,9 +1151,22 @@ mod tests {
 []
             "#;
 
-        eprintln!("{}", format_to_string(x.as_bytes(), Mode::Jsoncc));
+        eprintln!(
+            "{}",
+            format_to_string(
+                x.as_bytes(),
+                Mode::Jsoncc {
+                    include_commas: true
+                }
+            )
+        );
         assert_eq!(
-            format_to_string(x.as_bytes(), Mode::Jsoncc),
+            format_to_string(
+                x.as_bytes(),
+                Mode::Jsoncc {
+                    include_commas: true
+                }
+            ),
             r#"[]
 {}
 []
@@ -1225,7 +1254,12 @@ mod tests {
         eprintln!("{}", format_to_string(x.as_bytes(), Mode::Json));
 
         assert_eq!(
-            format_to_string(x.as_bytes(), Mode::Jsoncc),
+            format_to_string(
+                x.as_bytes(),
+                Mode::Jsoncc {
+                    include_commas: true
+                }
+            ),
             r#"[]
 {
   /*1*/
